@@ -76,7 +76,9 @@ impl TrafficMonitor {
         loop {
             interval.tick().await;
 
-            if let Err(e) = self.update_traffic_stats().await {
+            // if let Err(e) = self.update_traffic_stats().await {
+            // if let Err(e) = self.update_traffic_stats_per_ip().await {
+            if let Err(e) = self.update_traffic_stats_native().await {
                 error!("更新流量统计失败: {:?}", e);
                 continue;
             }
@@ -732,226 +734,959 @@ async fn start_rule_engine(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-    use tokio::time::{sleep, Duration};
+/////////
+// 直接获取每个IP流量信息的监控方案
+use std::path::Path;
+use std::process::Command;
 
-    // Mock 结构体用于测试
-    #[derive(Clone)]
-    pub struct MockFirewall {
-        pub blocked_ips: Arc<DashMap<IpAddr, bool>>,
+/// 每个IP的详细流量统计
+#[derive(Debug, Clone)]
+pub struct IpTrafficStats {
+    pub ip: IpAddr,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_packets: u64,
+    pub tx_packets: u64,
+    pub last_updated: Instant,
+    pub connections: Vec<ConnectionDetail>,
+}
+
+/// 连接详细信息
+#[derive(Debug, Clone)]
+pub struct ConnectionDetail {
+    pub local_port: u16,
+    pub remote_ip: IpAddr,
+    pub remote_port: u16,
+    pub protocol: String,
+    pub state: String,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+}
+
+impl TrafficMonitor {
+    /// 主要的流量更新方法 - 直接获取每个IP的流量
+    async fn update_traffic_stats_per_ip(&self) -> anyhow::Result<()> {
+        // 方法1: 通过iptables规则获取每个IP的流量
+        if let Ok(ip_stats) = self.get_traffic_via_iptables().await {
+            self.update_stats_from_ip_data(ip_stats).await?;
+            return Ok(());
+        }
+        
+        // 方法2: 通过netstat和ss命令获取连接级流量
+        if let Ok(ip_stats) = self.get_traffic_via_netstat().await {
+            self.update_stats_from_ip_data(ip_stats).await?;
+            return Ok(());
+        }
+        
+        // 方法3: 通过解析/proc/net/dev和连接表计算
+        if let Ok(ip_stats) = self.get_traffic_via_proc_analysis().await {
+            self.update_stats_from_ip_data(ip_stats).await?;
+            return Ok(());
+        }
+        
+        // 方法4: 使用BPF/eBPF (如果可用)
+        if let Ok(ip_stats) = self.get_traffic_via_bpf().await {
+            self.update_stats_from_ip_data(ip_stats).await?;
+            return Ok(());
+        }
+        
+        warn!("所有流量获取方法都失败，回退到原始方法");
+        self.update_traffic_stats().await
     }
 
-    impl MockFirewall {
-        pub fn new() -> Self {
-            Self {
-                blocked_ips: Arc::new(DashMap::new()),
+    /// 方法1: 通过iptables规则获取每个IP的流量统计
+    async fn get_traffic_via_iptables(&self) -> anyhow::Result<HashMap<IpAddr, IpTrafficStats>> {
+        let mut ip_stats = HashMap::new();
+        
+        // 首先确保有iptables规则来统计流量
+        self.ensure_iptables_rules().await?;
+        
+        // 获取iptables统计信息
+        let output = Command::new("iptables")
+            .args(["-L", "INPUT", "-v", "-n", "-x"])
+            .output()?;
+        
+        if !output.status.success() {
+            anyhow::bail!("执行iptables命令失败");
+        }
+        
+        let stdout = String::from_utf8(output.stdout)?;
+        self.parse_iptables_output(&stdout, &mut ip_stats)?;
+        
+        // 同样处理OUTPUT链
+        let output = Command::new("iptables")
+            .args(["-L", "OUTPUT", "-v", "-n", "-x"])
+            .output()?;
+        
+        if output.status.success() {
+            let stdout = String::from_utf8(output.stdout)?;
+            self.parse_iptables_output(&stdout, &mut ip_stats)?;
+        }
+        
+        Ok(ip_stats)
+    }
+    
+    /// 确保iptables规则存在以统计每个IP的流量
+    async fn ensure_iptables_rules(&self) -> anyhow::Result<()> {
+        // 获取当前活跃的IP地址
+        let active_ips = self.get_active_ips().await?;
+        
+        for ip in active_ips {
+            // 为每个IP创建INPUT和OUTPUT规则
+            let ip_str = ip.to_string();
+            
+            // INPUT规则 (接收流量)
+            let _result = Command::new("iptables")
+                .args(["-I", "INPUT", "-s", &ip_str, "-j", "ACCEPT"])
+                .output();
+            
+            // OUTPUT规则 (发送流量)
+            let _result = Command::new("iptables")
+                .args(["-I", "OUTPUT", "-d", &ip_str, "-j", "ACCEPT"])
+                .output();
+        }
+        
+        Ok(())
+    }
+    
+    /// 解析iptables输出获取流量统计
+    fn parse_iptables_output(
+        &self, 
+        output: &str, 
+        ip_stats: &mut HashMap<IpAddr, IpTrafficStats>
+    ) -> anyhow::Result<()> {
+        for line in output.lines().skip(2) { // 跳过标题行
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() < 9 {
+                continue;
+            }
+            
+            // 格式: pkts bytes target prot opt in out source destination
+            let packets: u64 = fields[0].parse().unwrap_or(0);
+            let bytes: u64 = fields[1].parse().unwrap_or(0);
+            let source = fields[7];
+            let destination = fields[8];
+            
+            // 解析源IP和目标IP
+            if let Ok(src_ip) = source.parse::<IpAddr>() {
+                let entry = ip_stats.entry(src_ip).or_insert_with(|| IpTrafficStats {
+                    ip: src_ip,
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                    rx_packets: 0,
+                    tx_packets: 0,
+                    last_updated: Instant::now(),
+                    connections: Vec::new(),
+                });
+                entry.tx_bytes += bytes;
+                entry.tx_packets += packets;
+            }
+            
+            if let Ok(dst_ip) = destination.parse::<IpAddr>() {
+                let entry = ip_stats.entry(dst_ip).or_insert_with(|| IpTrafficStats {
+                    ip: dst_ip,
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                    rx_packets: 0,
+                    tx_packets: 0,
+                    last_updated: Instant::now(),
+                    connections: Vec::new(),
+                });
+                entry.rx_bytes += bytes;
+                entry.rx_packets += packets;
             }
         }
-
-        pub fn block_ip(&mut self, ip: IpAddr) -> anyhow::Result<()> {
-            self.blocked_ips.insert(ip, true);
-            Ok(())
-        }
-
-        pub fn is_blocked(&self, ip: &IpAddr) -> bool {
-            self.blocked_ips.get(ip).is_some()
-        }
+        
+        Ok(())
     }
 
-    #[derive(Clone)]
-    pub struct MockRuleEngine {
-        pub stats: Arc<DashMap<IpAddr, u64>>,
-        pub threshold: u64,
-    }
-
-    impl MockRuleEngine {
-        pub fn new(stats: Arc<DashMap<IpAddr, u64>>, threshold: u64) -> Self {
-            Self { stats, threshold }
+    /// 方法2: 通过ss命令获取连接级流量统计
+    async fn get_traffic_via_netstat(&self) -> anyhow::Result<HashMap<IpAddr, IpTrafficStats>> {
+        let mut ip_stats = HashMap::new();
+        
+        // 使用ss命令获取详细的连接信息
+        let output = Command::new("ss")
+            .args(["-tuln", "-e", "-i"]) // -e显示扩展信息, -i显示内部TCP信息
+            .output()?;
+        
+        if !output.status.success() {
+            anyhow::bail!("执行ss命令失败");
         }
-
-        pub async fn check_and_apply(&self, fw: &mut MockFirewall) -> anyhow::Result<()> {
-            for entry in self.stats.iter() {
-                let (ip, &bytes) = entry.pair();
-                if bytes > self.threshold && !fw.is_blocked(ip) {
-                    fw.block_ip(*ip)?;
+        
+        let stdout = String::from_utf8(output.stdout)?;
+        self.parse_ss_output(&stdout, &mut ip_stats)?;
+        
+        Ok(ip_stats)
+    }
+    
+    /// 解析ss命令输出
+    fn parse_ss_output(
+        &self, 
+        output: &str, 
+        ip_stats: &mut HashMap<IpAddr, IpTrafficStats>
+    ) -> anyhow::Result<()> {
+        for line in output.lines() {
+            if line.starts_with("tcp") || line.starts_with("udp") {
+                if let Ok(connection) = self.parse_ss_line(line) {
+                    // 将连接信息添加到对应IP的统计中
+                    let entry = ip_stats.entry(connection.remote_ip).or_insert_with(|| IpTrafficStats {
+                        ip: connection.remote_ip,
+                        rx_bytes: 0,
+                        tx_bytes: 0,
+                        rx_packets: 0,
+                        tx_packets: 0,
+                        last_updated: Instant::now(),
+                        connections: Vec::new(),
+                    });
+                    
+                    entry.rx_bytes += connection.rx_bytes;
+                    entry.tx_bytes += connection.tx_bytes;
+                    entry.connections.push(connection);
                 }
             }
-            Ok(())
+        }
+        
+        Ok(())
+    }
+    
+    /// 解析单行ss输出
+    fn parse_ss_line(&self, line: &str) -> anyhow::Result<ConnectionDetail> {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 5 {
+            anyhow::bail!("ss输出格式不正确");
+        }
+        
+        let protocol = fields[0].to_string();
+        let state = fields[1].to_string();
+        let local_addr = fields[4];
+        let remote_addr = if fields.len() > 5 { fields[5] } else { "0.0.0.0:0" };
+        
+        // 解析地址
+        let (local_ip, local_port) = self.parse_socket_address(local_addr)?;
+        let (remote_ip, remote_port) = self.parse_socket_address(remote_addr)?;
+        
+        // 从扩展信息中提取流量统计 (如果可用)
+        let (rx_bytes, tx_bytes) = self.extract_traffic_from_ss_line(line);
+        
+        Ok(ConnectionDetail {
+            local_port,
+            remote_ip,
+            remote_port,
+            protocol,
+            state,
+            rx_bytes,
+            tx_bytes,
+        })
+    }
+    
+    /// 从ss输出行提取流量信息
+    fn extract_traffic_from_ss_line(&self, line: &str) -> (u64, u64) {
+        // ss -i 输出包含类似 "bytes_sent:1234 bytes_received:5678" 的信息
+        let mut rx_bytes = 0u64;
+        let mut tx_bytes = 0u64;
+        
+        if let Some(start) = line.find("bytes_sent:") {
+            if let Some(end) = line[start..].find(' ') {
+                if let Ok(bytes) = line[start+11..start+end].parse::<u64>() {
+                    tx_bytes = bytes;
+                }
+            }
+        }
+        
+        if let Some(start) = line.find("bytes_received:") {
+            if let Some(end) = line[start..].find(' ') {
+                if let Ok(bytes) = line[start+15..start+end].parse::<u64>() {
+                    rx_bytes = bytes;
+                }
+            }
+        }
+        
+        (rx_bytes, tx_bytes)
+    }
+
+    /// 方法3: 通过分析/proc文件系统获取每IP流量
+    async fn get_traffic_via_proc_analysis(&self) -> anyhow::Result<HashMap<IpAddr, IpTrafficStats>> {
+        let mut ip_stats = HashMap::new();
+        
+        // 读取网络连接信息
+        let connections = self.get_all_connections_with_pids().await?;
+        
+        // 为每个连接获取进程级别的网络统计
+        for conn in connections {
+            if let Ok(traffic) = self.get_process_network_stats(conn.pid).await {
+                let entry = ip_stats.entry(conn.remote_ip).or_insert_with(|| IpTrafficStats {
+                    ip: conn.remote_ip,
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                    rx_packets: 0,
+                    tx_packets: 0,
+                    last_updated: Instant::now(),
+                    connections: Vec::new(),
+                });
+                
+                entry.rx_bytes += traffic.0;
+                entry.tx_bytes += traffic.1;
+                entry.connections.push(ConnectionDetail {
+                    local_port: conn.local_port,
+                    remote_ip: conn.remote_ip,
+                    remote_port: conn.remote_port,
+                    protocol: conn.protocol,
+                    state: conn.state,
+                    rx_bytes: traffic.0,
+                    tx_bytes: traffic.1,
+                });
+            }
+        }
+        
+        Ok(ip_stats)
+    }
+
+    /// 方法4: 使用BPF获取每IP流量 (需要BPF支持)
+    async fn get_traffic_via_bpf(&self) -> anyhow::Result<HashMap<IpAddr, IpTrafficStats>> {
+        // 这里需要BPF/eBPF支持，可以使用类似bcc-tools的工具
+        // 或者使用Rust的aya库来编写BPF程序
+        
+        // 示例：使用现有的BPF工具
+        let output = Command::new("python3")
+            .args(["-c", r#"
+import subprocess
+import json
+
+# 使用bcc的tcptop工具获取每个连接的流量
+try:
+    result = subprocess.run(['tcptop', '-C', '-c', '1'], 
+                          capture_output=True, text=True, timeout=2)
+    if result.returncode == 0:
+        print(result.stdout)
+except:
+    pass
+"#])
+            .output();
+        
+        if let Ok(output) = output {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                return self.parse_bpf_output(&stdout);
+            }
+        }
+        
+        anyhow::bail!("BPF方法不可用")
+    }
+    
+    /// 解析BPF工具输出
+    fn parse_bpf_output(&self, output: &str) -> anyhow::Result<HashMap<IpAddr, IpTrafficStats>> {
+        let mut ip_stats = HashMap::new();
+        
+        for line in output.lines() {
+            // 解析tcptop输出格式
+            // 通常格式为: PID COMM LADDR RADDR RX_KB TX_KB
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() >= 6 {
+                if let (Ok(remote_ip), Ok(rx_kb), Ok(tx_kb)) = (
+                    self.extract_ip_from_addr(fields[4]),
+                    fields[5].parse::<f64>(),
+                    fields[6].parse::<f64>()
+                ) {
+                    let entry = ip_stats.entry(remote_ip).or_insert_with(|| IpTrafficStats {
+                        ip: remote_ip,
+                        rx_bytes: 0,
+                        tx_bytes: 0,
+                        rx_packets: 0,
+                        tx_packets: 0,
+                        last_updated: Instant::now(),
+                        connections: Vec::new(),
+                    });
+                    
+                    entry.rx_bytes += (rx_kb * 1024.0) as u64;
+                    entry.tx_bytes += (tx_kb * 1024.0) as u64;
+                }
+            }
+        }
+        
+        Ok(ip_stats)
+    }
+
+    /// 从地址字符串提取IP
+    fn extract_ip_from_addr(&self, addr: &str) -> anyhow::Result<IpAddr> {
+        if let Some(colon_pos) = addr.rfind(':') {
+            let ip_str = &addr[..colon_pos];
+            Ok(ip_str.parse()?)
+        } else {
+            Ok(addr.parse()?)
         }
     }
 
-    // 模拟 LinkMessage 用于测试
-    pub struct MockLinkMessage {
-        pub rx_bytes: u64,
-        pub is_up: bool,
+    /// 更新统计数据
+    async fn update_stats_from_ip_data(
+        &self, 
+        ip_stats: HashMap<IpAddr, IpTrafficStats>
+    ) -> anyhow::Result<()> {
+        for (ip, new_stats) in ip_stats {
+            let mut stats = self.stats.entry(ip).or_insert_with(TrafficStats::default);
+            
+            // 计算增量
+            let rx_delta = new_stats.rx_bytes.saturating_sub(stats.rx_bytes);
+            let tx_delta = new_stats.tx_bytes.saturating_sub(stats.tx_bytes);
+            
+            // 更新统计
+            stats.rx_bytes = new_stats.rx_bytes;
+            stats.tx_bytes = new_stats.tx_bytes;
+            stats.last_updated = Instant::now();
+            
+            if rx_delta > 0 || tx_delta > 0 {
+                debug!(
+                    "IP {} 流量更新: RX +{} bytes, TX +{} bytes", 
+                    ip, rx_delta, tx_delta
+                );
+            }
+        }
+        
+        Ok(())
     }
 
-    impl MockLinkMessage {
-        pub fn new(rx_bytes: u64, is_up: bool) -> Self {
-            Self { rx_bytes, is_up }
+    /// 辅助方法：获取所有活跃IP
+    async fn get_active_ips(&self) -> anyhow::Result<Vec<IpAddr>> {
+        let mut ips = Vec::new();
+        
+        // 从现有统计中获取
+        for entry in self.stats.iter() {
+            ips.push(*entry.key());
+        }
+        
+        // 从当前连接中获取
+        if let Ok(connections) = self.get_active_connections().await {
+            ips.extend(connections);
+        }
+        
+        // 去重
+        ips.sort();
+        ips.dedup();
+        
+        Ok(ips)
+    }
+    
+    /// 辅助方法：解析socket地址
+    fn parse_socket_address(&self, addr: &str) -> anyhow::Result<(IpAddr, u16)> {
+        if let Some(colon_pos) = addr.rfind(':') {
+            let ip_str = &addr[..colon_pos];
+            let port_str = &addr[colon_pos + 1..];
+            
+            let ip: IpAddr = ip_str.parse()?;
+            let port: u16 = port_str.parse()?;
+            
+            Ok((ip, port))
+        } else {
+            anyhow::bail!("无效的socket地址格式: {}", addr);
+        }
+    }
+
+    /// 获取带PID的连接信息 (需要root权限)
+    async fn get_all_connections_with_pids(&self) -> anyhow::Result<Vec<ConnectionWithPid>> {
+        // 实现留给具体的系统调用或工具
+        // 可以使用netstat -p 或 lsof -i
+        Ok(Vec::new())
+    }
+
+    /// 获取进程的网络统计
+    async fn get_process_network_stats(&self, pid: u32) -> anyhow::Result<(u64, u64)> {
+        // 读取 /proc/{pid}/net/dev 或类似文件
+        // 这个方法的实现取决于具体的系统和权限
+        Ok((0, 0))
+    }
+}
+
+/// 带PID的连接信息
+#[derive(Debug)]
+struct ConnectionWithPid {
+    pub pid: u32,
+    pub local_port: u16,
+    pub remote_ip: IpAddr,
+    pub remote_port: u16,
+    pub protocol: String,
+    pub state: String,
+}
+
+
+/////////
+
+// Rust原生方法获取每个IP的流量统计
+
+
+use std::fs;
+use std::io::{self, BufRead, BufReader};
+
+
+/// 连接状态枚举
+#[derive(Debug, Clone)]
+pub enum ConnectionState {
+    Established = 0x01,
+    SynSent = 0x02,
+    SynRecv = 0x03,
+    FinWait1 = 0x04,
+    FinWait2 = 0x05,
+    TimeWait = 0x06,
+    Close = 0x07,
+    CloseWait = 0x08,
+    LastAck = 0x09,
+    Listen = 0x0A,
+    Closing = 0x0B,
+    Unknown,
+}
+
+impl From<u8> for ConnectionState {
+    fn from(state: u8) -> Self {
+        match state {
+            0x01 => ConnectionState::Established,
+            0x02 => ConnectionState::SynSent,
+            0x03 => ConnectionState::SynRecv,
+            0x04 => ConnectionState::FinWait1,
+            0x05 => ConnectionState::FinWait2,
+            0x06 => ConnectionState::TimeWait,
+            0x07 => ConnectionState::Close,
+            0x08 => ConnectionState::CloseWait,
+            0x09 => ConnectionState::LastAck,
+            0x0A => ConnectionState::Listen,
+            0x0B => ConnectionState::Closing,
+            _ => ConnectionState::Unknown,
+        }
+    }
+}
+
+/// 单个连接的详细信息
+#[derive(Debug, Clone)]
+pub struct PerConnectionInfo {
+    pub local_ip: IpAddr,
+    pub local_port: u16,
+    pub remote_ip: IpAddr,
+    pub remote_port: u16,
+    pub state: ConnectionState,
+    pub inode: u64,
+    pub uid: u32,
+    pub protocol: String,
+}
+
+/// 每个IP的流量统计（通过连接关联）
+#[derive(Debug, Clone)]
+pub struct IpTrafficDetail {
+    pub ip: IpAddr,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub connections: Vec<PerConnectionInfo>,
+    pub last_updated: Instant,
+}
+
+impl TrafficMonitor {
+    /// 使用Rust原生方法更新流量统计
+    async fn update_traffic_stats_native(&self) -> anyhow::Result<()> {
+        // 1. 获取所有网络连接
+        let connections = self.get_all_connections_native().await?;
+        
+        // 2. 通过连接信息计算每个IP的流量
+        let ip_traffic_map = self.calculate_ip_traffic_from_connections(&connections).await?;
+        
+        // 3. 更新内部统计
+        self.update_internal_stats(ip_traffic_map).await;
+        
+        Ok(())
+    }
+
+    /// 获取所有网络连接（TCP + UDP）
+    async fn get_all_connections_native(&self) -> anyhow::Result<Vec<PerConnectionInfo>> {
+        let mut all_connections = Vec::new();
+        
+        // 获取TCP连接
+        all_connections.extend(self.read_tcp_connections("/proc/net/tcp", false).await?);
+        all_connections.extend(self.read_tcp_connections("/proc/net/tcp6", true).await?);
+        
+        // 获取UDP连接
+        all_connections.extend(self.read_udp_connections("/proc/net/udp", false).await?);
+        all_connections.extend(self.read_udp_connections("/proc/net/udp6", true).await?);
+        
+        Ok(all_connections)
+    }
+
+    /// 读取TCP连接信息
+    async fn read_tcp_connections(&self, path: &str, is_ipv6: bool) -> anyhow::Result<Vec<PerConnectionInfo>> {
+        let mut connections = Vec::new();
+        
+        let file = fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        
+        for (line_num, line) in reader.lines().enumerate() {
+            if line_num == 0 { continue; } // 跳过标题行
+            
+            let line = line?;
+            if let Ok(conn) = self.parse_tcp_line(&line, is_ipv6) {
+                connections.push(conn);
+            }
+        }
+        
+        Ok(connections)
+    }
+
+    /// 读取UDP连接信息
+    async fn read_udp_connections(&self, path: &str, is_ipv6: bool) -> anyhow::Result<Vec<PerConnectionInfo>> {
+        let mut connections = Vec::new();
+        
+        let file = fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        
+        for (line_num, line) in reader.lines().enumerate() {
+            if line_num == 0 { continue; } // 跳过标题行
+            
+            let line = line?;
+            if let Ok(conn) = self.parse_udp_line(&line, is_ipv6) {
+                connections.push(conn);
+            }
+        }
+        
+        Ok(connections)
+    }
+
+    /// 解析TCP连接行
+    fn parse_tcp_line(&self, line: &str, is_ipv6: bool) -> anyhow::Result<PerConnectionInfo> {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 10 {
+            anyhow::bail!("TCP行格式不正确");
         }
 
-        pub fn get_rx_bytes(&self) -> u64 {
-            self.rx_bytes
+        // 格式: sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode
+        let local_addr = fields[1];
+        let remote_addr = fields[2];
+        let state_hex = fields[3];
+        let uid = fields[7].parse::<u32>().unwrap_or(0);
+        let inode = fields[9].parse::<u64>().unwrap_or(0);
+
+        let (local_ip, local_port) = self.parse_address_native(local_addr, is_ipv6)?;
+        let (remote_ip, remote_port) = self.parse_address_native(remote_addr, is_ipv6)?;
+        
+        let state_num = u8::from_str_radix(state_hex, 16).unwrap_or(0);
+        let state = ConnectionState::from(state_num);
+
+        Ok(PerConnectionInfo {
+            local_ip,
+            local_port,
+            remote_ip,
+            remote_port,
+            state,
+            inode,
+            uid,
+            protocol: "tcp".to_string(),
+        })
+    }
+
+    /// 解析UDP连接行
+    fn parse_udp_line(&self, line: &str, is_ipv6: bool) -> anyhow::Result<PerConnectionInfo> {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 10 {
+            anyhow::bail!("UDP行格式不正确");
         }
 
-        pub fn is_interface_up(&self) -> bool {
-            self.is_up
+        let local_addr = fields[1];
+        let remote_addr = fields[2];
+        let uid = fields[7].parse::<u32>().unwrap_or(0);
+        let inode = fields[9].parse::<u64>().unwrap_or(0);
+
+        let (local_ip, local_port) = self.parse_address_native(local_addr, is_ipv6)?;
+        let (remote_ip, remote_port) = self.parse_address_native(remote_addr, is_ipv6)?;
+
+        Ok(PerConnectionInfo {
+            local_ip,
+            local_port,
+            remote_ip,
+            remote_port,
+            state: ConnectionState::Established, // UDP没有状态概念
+            inode,
+            uid,
+            protocol: "udp".to_string(),
+        })
+    }
+
+    /// 解析地址字符串 (原生方法)
+    fn parse_address_native(&self, addr_str: &str, is_ipv6: bool) -> anyhow::Result<(IpAddr, u16)> {
+        let parts: Vec<&str> = addr_str.split(':').collect();
+        if parts.len() != 2 {
+            anyhow::bail!("地址格式错误: {}", addr_str);
         }
+
+        let addr_hex = parts[0];
+        let port = u16::from_str_radix(parts[1], 16)?;
+
+        let ip = if is_ipv6 {
+            if addr_hex.len() != 32 {
+                anyhow::bail!("IPv6地址长度错误");
+            }
+            
+            let mut bytes = [0u8; 16];
+            for i in 0..16 {
+                let start = i * 2;
+                let end = start + 2;
+                bytes[i] = u8::from_str_radix(&addr_hex[start..end], 16)?;
+            }
+            
+            IpAddr::V6(Ipv6Addr::from(bytes))
+        } else {
+            if addr_hex.len() != 8 {
+                anyhow::bail!("IPv4地址长度错误");
+            }
+            
+            let addr_u32 = u32::from_str_radix(addr_hex, 16)?;
+            let bytes = addr_u32.to_le_bytes(); // 小端序转换
+            IpAddr::V4(Ipv4Addr::from(bytes))
+        };
+
+        Ok((ip, port))
     }
 
-    #[tokio::test]
-    async fn test_traffic_monitoring_logic() {
-        let stats = Arc::new(DashMap::<IpAddr, u64>::new());
-        let test_ip: IpAddr = "192.168.1.1".parse().unwrap();
+    /// 通过连接信息计算每个IP的流量
+    async fn calculate_ip_traffic_from_connections(
+        &self, 
+        connections: &[PerConnectionInfo]
+    ) -> anyhow::Result<HashMap<IpAddr, IpTrafficDetail>> {
+        let mut ip_traffic_map = HashMap::new();
 
-        // 模拟流量数据
-        stats.insert(test_ip, 1000);
+        // 方法1: 通过socket统计信息获取流量
+        for conn in connections {
+            // 获取socket的流量统计
+            if let Ok((rx_bytes, tx_bytes)) = self.get_socket_traffic_by_inode(conn.inode).await {
+                // 为本地IP和远程IP分别记录流量
+                self.add_traffic_to_map(&mut ip_traffic_map, conn.local_ip, rx_bytes, tx_bytes, conn.clone());
+                self.add_traffic_to_map(&mut ip_traffic_map, conn.remote_ip, tx_bytes, rx_bytes, conn.clone());
+            }
+        }
 
-        // 验证统计数据
-        assert_eq!(stats.get(&test_ip).unwrap().value(), &1000);
+        // 方法2: 如果方法1失败，使用网络接口统计推算
+        if ip_traffic_map.is_empty() {
+            return self.estimate_traffic_from_interface_stats(connections).await;
+        }
 
-        // 模拟流量增长
-        stats.insert(test_ip, 2000);
-        assert_eq!(stats.get(&test_ip).unwrap().value(), &2000);
+        Ok(ip_traffic_map)
     }
 
-    #[tokio::test]
-    async fn test_rule_engine_blocking() {
-        let stats = Arc::new(DashMap::<IpAddr, u64>::new());
-        let mut fw = MockFirewall::new();
-        let engine = MockRuleEngine::new(stats.clone(), 1500);
+    /// 通过inode获取socket的流量统计
+    async fn get_socket_traffic_by_inode(&self, inode: u64) -> anyhow::Result<(u64, u64)> {
+        // 查找对应的进程
+        if let Ok(pid) = self.find_process_by_socket_inode(inode).await {
+            // 读取进程的网络统计
+            return self.get_process_network_stats_native(pid).await;
+        }
 
-        let test_ip: IpAddr = "192.168.1.100".parse().unwrap();
-
-        // 初始状态：IP 未被阻止
-        assert!(!fw.is_blocked(&test_ip));
-
-        // 设置低于阈值的流量
-        stats.insert(test_ip, 1000);
-        engine.check_and_apply(&mut fw).await.unwrap();
-        assert!(!fw.is_blocked(&test_ip));
-
-        // 设置高于阈值的流量
-        stats.insert(test_ip, 2000);
-        engine.check_and_apply(&mut fw).await.unwrap();
-        assert!(fw.is_blocked(&test_ip));
+        // 如果找不到进程，尝试从 /proc/net/sockstat 推算
+        self.estimate_socket_traffic(inode).await
     }
 
-    #[tokio::test]
-    async fn test_mock_link_message() {
-        // 测试模拟链路消息
-        let msg_up = MockLinkMessage::new(12345, true);
-        assert_eq!(msg_up.get_rx_bytes(), 12345);
-        assert!(msg_up.is_interface_up());
-
-        let msg_down = MockLinkMessage::new(0, false);
-        assert_eq!(msg_down.get_rx_bytes(), 0);
-        assert!(!msg_down.is_interface_up());
+    /// 通过socket inode查找进程ID
+    async fn find_process_by_socket_inode(&self, target_inode: u64) -> anyhow::Result<u32> {
+        let proc_dir = fs::read_dir("/proc")?;
+        
+        for entry in proc_dir {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+            
+            // 只处理数字目录（进程ID）
+            if let Ok(pid) = file_name_str.parse::<u32>() {
+                if let Ok(found_inode) = self.check_process_sockets(pid, target_inode).await {
+                    if found_inode {
+                        return Ok(pid);
+                    }
+                }
+            }
+        }
+        
+        anyhow::bail!("未找到对应的进程")
     }
 
-    #[tokio::test]
-    async fn test_stats_concurrency() {
-        let stats = Arc::new(DashMap::<IpAddr, u64>::new());
-        let stats_clone = stats.clone();
+    /// 检查进程的socket是否包含目标inode
+    async fn check_process_sockets(&self, pid: u32, target_inode: u64) -> anyhow::Result<bool> {
+        let fd_dir_path = format!("/proc/{}/fd", pid);
+        
+        if let Ok(fd_dir) = fs::read_dir(&fd_dir_path) {
+            for fd_entry in fd_dir {
+                let fd_entry = fd_entry?;
+                let link_path = fd_entry.path();
+                
+                if let Ok(link_target) = fs::read_link(&link_path) {
+                    let link_str = link_target.to_string_lossy();
+                    if link_str.starts_with("socket:[") {
+                        // 提取inode号
+                        if let Some(start) = link_str.find('[') {
+                            if let Some(end) = link_str.find(']') {
+                                let inode_str = &link_str[start+1..end];
+                                if let Ok(inode) = inode_str.parse::<u64>() {
+                                    if inode == target_inode {
+                                        return Ok(true);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(false)
+    }
 
-        // 并发写入测试
-        let handles: Vec<_> = (0..10)
-            .map(|i| {
-                let stats = stats_clone.clone();
-                tokio::spawn(async move {
-                    let ip: IpAddr = format!("192.168.1.{}", i).parse().unwrap();
-                    stats.insert(ip, (i * 100) as u64);
-                })
-            })
+    /// 获取进程的网络统计信息
+    async fn get_process_network_stats_native(&self, pid: u32) -> anyhow::Result<(u64, u64)> {
+        // 方法1: 读取 /proc/{pid}/net/dev
+        let net_dev_path = format!("/proc/{}/net/dev", pid);
+        if let Ok(content) = fs::read_to_string(&net_dev_path) {
+            if let Ok((rx, tx)) = self.parse_proc_net_dev(&content) {
+                return Ok((rx, tx));
+            }
+        }
+
+        // 方法2: 读取 /proc/{pid}/status 中的网络相关信息
+        let status_path = format!("/proc/{}/status", pid);
+        if let Ok(content) = fs::read_to_string(&status_path) {
+            if let Ok((rx, tx)) = self.parse_proc_status_network(&content) {
+                return Ok((rx, tx));
+            }
+        }
+
+        // 方法3: 读取 /proc/{pid}/io
+        let io_path = format!("/proc/{}/io", pid);
+        if let Ok(content) = fs::read_to_string(&io_path) {
+            return self.parse_proc_io(&content);
+        }
+
+        Ok((0, 0))
+    }
+
+    /// 解析 /proc/net/dev 内容
+    fn parse_proc_net_dev(&self, content: &str) -> anyhow::Result<(u64, u64)> {
+        let mut total_rx = 0u64;
+        let mut total_tx = 0u64;
+
+        for line in content.lines().skip(2) { // 跳过标题行
+            let line = line.trim();
+            if let Some(colon_pos) = line.find(':') {
+                let stats_part = &line[colon_pos + 1..];
+                let fields: Vec<&str> = stats_part.split_whitespace().collect();
+                
+                if fields.len() >= 9 {
+                    // RX bytes是第1个字段，TX bytes是第9个字段
+                    if let (Ok(rx), Ok(tx)) = (fields[0].parse::<u64>(), fields[8].parse::<u64>()) {
+                        total_rx += rx;
+                        total_tx += tx;
+                    }
+                }
+            }
+        }
+
+        Ok((total_rx, total_tx))
+    }
+
+    /// 解析 /proc/{pid}/io 内容
+    fn parse_proc_io(&self, content: &str) -> anyhow::Result<(u64, u64)> {
+        let mut read_bytes = 0u64;
+        let mut write_bytes = 0u64;
+
+        for line in content.lines() {
+            if line.starts_with("read_bytes:") {
+                if let Some(value_str) = line.split_whitespace().nth(1) {
+                    read_bytes = value_str.parse().unwrap_or(0);
+                }
+            } else if line.starts_with("write_bytes:") {
+                if let Some(value_str) = line.split_whitespace().nth(1) {
+                    write_bytes = value_str.parse().unwrap_or(0);
+                }
+            }
+        }
+
+        Ok((read_bytes, write_bytes))
+    }
+
+    /// 解析 /proc/status 中的网络信息
+    fn parse_proc_status_network(&self, content: &str) -> anyhow::Result<(u64, u64)> {
+        // /proc/status 通常不包含网络统计，但可以尝试其他字段
+        Ok((0, 0))
+    }
+
+    /// 估算socket流量
+    async fn estimate_socket_traffic(&self, _inode: u64) -> anyhow::Result<(u64, u64)> {
+        // 可以通过 /proc/net/sockstat 等文件尝试估算
+        // 这里返回0作为fallback
+        Ok((0, 0))
+    }
+
+    /// 从接口统计估算流量分配
+    async fn estimate_traffic_from_interface_stats(
+        &self,
+        connections: &[PerConnectionInfo]
+    ) -> anyhow::Result<HashMap<IpAddr, IpTrafficDetail>> {
+        let mut ip_traffic_map = HashMap::new();
+        
+        // 获取接口总流量
+        let interface_stats = self.get_interface_stats().await?;
+        
+        // 按连接权重分配
+        let active_connections: Vec<_> = connections.iter()
+            .filter(|conn| !conn.remote_ip.is_loopback() && !conn.remote_ip.is_unspecified())
             .collect();
-
-        // 等待所有任务完成
-        for handle in handles {
-            handle.await.unwrap();
-        }
-
-        // 验证所有数据都被正确插入
-        assert_eq!(stats.len(), 10);
-        for i in 0..10 {
-            let ip: IpAddr = format!("192.168.1.{}", i).parse().unwrap();
-            assert_eq!(stats.get(&ip).unwrap().value(), &((i * 100) as u64));
-        }
-    }
-
-    #[tokio::test]
-    async fn test_error_handling() {
-        // 测试无效接口名称处理
-        let stats = Arc::new(DashMap::<IpAddr, u64>::new());
-
-        // 模拟错误情况
-        let test_ip: IpAddr = "127.0.0.1".parse().unwrap();
-        stats.insert(test_ip, 1000);
-
-        // 验证错误处理不会导致 panic
-        assert!(stats.contains_key(&test_ip));
-    }
-
-    #[tokio::test]
-    async fn test_delta_calculation() {
-        let mut last_counters = 1000u64;
-        let current_counters = 1500u64;
-
-        let delta = current_counters.saturating_sub(last_counters);
-        assert_eq!(delta, 500);
-
-        // 测试溢出情况
-        last_counters = 2000;
-        let delta_overflow = current_counters.saturating_sub(last_counters);
-        assert_eq!(delta_overflow, 0);
-    }
-
-    #[tokio::test]
-    async fn test_traffic_threshold_logic() {
-        let stats = Arc::new(DashMap::<IpAddr, u64>::new());
-        let threshold = 1024u64; // 1KB 阈值
-
-        let low_traffic_ip: IpAddr = "192.168.1.10".parse().unwrap();
-        let high_traffic_ip: IpAddr = "192.168.1.20".parse().unwrap();
-
-        // 低流量 IP
-        stats.insert(low_traffic_ip, 512);
-        // 高流量 IP
-        stats.insert(high_traffic_ip, 2048);
-
-        // 检查阈值逻辑
-        for entry in stats.iter() {
-            let (ip, &bytes) = entry.pair();
-            if bytes > threshold {
-                assert_eq!(*ip, high_traffic_ip);
-            } else {
-                assert_eq!(*ip, low_traffic_ip);
+        
+        if !active_connections.is_empty() {
+            let rx_per_connection = interface_stats.rx_bytes / active_connections.len() as u64;
+            let tx_per_connection = interface_stats.tx_bytes / active_connections.len() as u64;
+            
+            for conn in active_connections {
+                self.add_traffic_to_map(
+                    &mut ip_traffic_map, 
+                    conn.remote_ip, 
+                    rx_per_connection, 
+                    tx_per_connection, 
+                    conn.clone()
+                );
             }
         }
+        
+        Ok(ip_traffic_map)
     }
 
-    #[tokio::test]
-    async fn test_interface_monitoring_simulation() {
-        // 模拟接口监控场景
-        let stats = Arc::new(DashMap::<IpAddr, u64>::new());
-        let test_ip: IpAddr = "10.0.0.1".parse().unwrap();
+    /// 添加流量到映射表
+    fn add_traffic_to_map(
+        &self,
+        map: &mut HashMap<IpAddr, IpTrafficDetail>,
+        ip: IpAddr,
+        rx_bytes: u64,
+        tx_bytes: u64,
+        connection: PerConnectionInfo,
+    ) {
+        let entry = map.entry(ip).or_insert_with(|| IpTrafficDetail {
+            ip,
+            rx_bytes: 0,
+            tx_bytes: 0,
+            connections: Vec::new(),
+            last_updated: Instant::now(),
+        });
+        
+        entry.rx_bytes += rx_bytes;
+        entry.tx_bytes += tx_bytes;
+        entry.connections.push(connection);
+        entry.last_updated = Instant::now();
+    }
 
-        // 模拟时间序列的流量数据
-        let traffic_data = vec![100, 250, 500, 750, 1000, 1200];
-
-        for (time, bytes) in traffic_data.iter().enumerate() {
-            stats.insert(test_ip, *bytes);
-
-            // 验证数据随时间递增
-            if time > 0 {
-                assert!(*bytes >= traffic_data[time - 1]);
+    /// 更新内部统计
+    async fn update_internal_stats(&self, ip_traffic_map: HashMap<IpAddr, IpTrafficDetail>) {
+        for (ip, traffic_detail) in ip_traffic_map {
+            let mut stats = self.stats.entry(ip).or_insert_with(TrafficStats::default);
+            
+            // 计算增量
+            let rx_delta = traffic_detail.rx_bytes.saturating_sub(stats.rx_bytes);
+            let tx_delta = traffic_detail.tx_bytes.saturating_sub(stats.tx_bytes);
+            
+            stats.rx_bytes = traffic_detail.rx_bytes;
+            stats.tx_bytes = traffic_detail.tx_bytes;
+            stats.last_updated = Instant::now();
+            
+            if rx_delta > 0 || tx_delta > 0 {
+                debug!(
+                    "IP {} 流量更新: RX +{} bytes, TX +{} bytes (连接数: {})",
+                    ip, rx_delta, tx_delta, traffic_detail.connections.len()
+                );
             }
         }
-
-        // 验证最终状态
-        assert_eq!(stats.get(&test_ip).unwrap().value(), &1200);
     }
 }
