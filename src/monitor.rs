@@ -103,7 +103,8 @@ impl TrafficMonitor {
 
                 // 在实际应用中，这里应该通过其他方式获取具体的IP地址
                 // 例如：解析网络包、从连接跟踪表读取、或使用其他网络监控工具
-                self.distribute_traffic_by_connections(rx_delta, tx_delta)
+                // self.distribute_traffic_by_connections(rx_delta, tx_delta)
+                self.distribute_traffic_by_weighted_connections(rx_delta, tx_delta)
                     .await?;
             }
         }
@@ -368,6 +369,304 @@ impl TrafficMonitor {
     }
 }
 
+
+
+/// 连接信息结构体
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    pub ip: IpAddr,
+    pub port: u16,
+    pub protocol: String, // "tcp" 或 "udp"
+    pub state: String,    // 连接状态
+    pub last_activity: Instant,
+    pub historical_rx: u64,
+    pub historical_tx: u64,
+    pub weight: f64,      // 权重，用于分配流量
+}
+
+impl TrafficMonitor {
+    /// 根据连接权重分配流量（替换原来的简单平均分配）
+    async fn distribute_traffic_by_weighted_connections(
+        &self,
+        rx_delta: u64,
+        tx_delta: u64,
+    ) -> anyhow::Result<()> {
+        // 获取活跃连接的详细信息
+        let active_connections = self.get_active_connections_with_info().await?;
+        
+        if active_connections.is_empty() {
+            debug!("没有找到活跃连接，跳过流量分配");
+            return Ok(());
+        }
+        
+        // 计算权重并分配流量
+        let distributed_traffic = self.calculate_weighted_distribution(
+            &active_connections, 
+            rx_delta, 
+            tx_delta
+        ).await?;
+        
+        // 更新统计信息
+        for (ip, (rx_bytes, tx_bytes)) in distributed_traffic {
+            let mut stats = self.stats.entry(ip).or_insert_with(TrafficStats::default);
+            stats.rx_bytes = stats.rx_bytes.saturating_add(rx_bytes);
+            stats.tx_bytes = stats.tx_bytes.saturating_add(tx_bytes);
+            stats.last_updated = Instant::now();
+            
+            debug!("更新IP {} 流量统计: RX +{}, TX +{}", ip, rx_bytes, tx_bytes);
+        }
+        
+        Ok(())
+    }
+
+    /// 计算基于权重的流量分配
+    async fn calculate_weighted_distribution(
+        &self,
+        connections: &[ConnectionInfo],
+        total_rx: u64,
+        total_tx: u64,
+    ) -> anyhow::Result<HashMap<IpAddr, (u64, u64)>> {
+        let mut distribution = HashMap::new();
+        
+        // 方法1: 基于历史流量比例分配
+        let total_historical_rx: u64 = connections.iter()
+            .map(|conn| conn.historical_rx)
+            .sum();
+        let total_historical_tx: u64 = connections.iter()
+            .map(|conn| conn.historical_tx)
+            .sum();
+        
+        if total_historical_rx > 0 || total_historical_tx > 0 {
+            // 基于历史流量比例分配
+            for conn in connections {
+                let rx_ratio = if total_historical_rx > 0 {
+                    conn.historical_rx as f64 / total_historical_rx as f64
+                } else {
+                    1.0 / connections.len() as f64
+                };
+                
+                let tx_ratio = if total_historical_tx > 0 {
+                    conn.historical_tx as f64 / total_historical_tx as f64
+                } else {
+                    1.0 / connections.len() as f64
+                };
+                
+                let allocated_rx = (total_rx as f64 * rx_ratio) as u64;
+                let allocated_tx = (total_tx as f64 * tx_ratio) as u64;
+                
+                *distribution.entry(conn.ip).or_insert((0, 0)) = (allocated_rx, allocated_tx);
+            }
+        } else {
+            // 方法2: 基于连接类型和状态的权重分配
+            self.distribute_by_connection_weight(connections, total_rx, total_tx, &mut distribution);
+        }
+        
+        Ok(distribution)
+    }
+    
+    /// 基于连接类型和状态分配流量
+    fn distribute_by_connection_weight(
+        &self,
+        connections: &[ConnectionInfo],
+        total_rx: u64,
+        total_tx: u64,
+        distribution: &mut HashMap<IpAddr, (u64, u64)>,
+    ) {
+        let total_weight: f64 = connections.iter().map(|conn| conn.weight).sum();
+        
+        if total_weight > 0.0 {
+            for conn in connections {
+                let weight_ratio = conn.weight / total_weight;
+                let allocated_rx = (total_rx as f64 * weight_ratio) as u64;
+                let allocated_tx = (total_tx as f64 * weight_ratio) as u64;
+                
+                *distribution.entry(conn.ip).or_insert((0, 0)) = (allocated_rx, allocated_tx);
+            }
+        } else {
+            // fallback 到平均分配
+            let rx_per_connection = total_rx / connections.len() as u64;
+            let tx_per_connection = total_tx / connections.len() as u64;
+            
+            for conn in connections {
+                *distribution.entry(conn.ip).or_insert((0, 0)) = (rx_per_connection, tx_per_connection);
+            }
+        }
+    }
+
+    /// 获取带详细信息的活跃连接
+    async fn get_active_connections_with_info(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
+        let mut connections = Vec::new();
+        
+        // 解析TCP连接
+        if let Ok(tcp_connections) = self.parse_proc_net_tcp_with_info().await {
+            connections.extend(tcp_connections);
+        }
+        
+        // 解析UDP连接
+        if let Ok(udp_connections) = self.parse_proc_net_udp_with_info().await {
+            connections.extend(udp_connections);
+        }
+        
+        // 计算权重
+        for conn in &mut connections {
+            conn.weight = self.calculate_connection_weight(conn);
+        }
+        
+        Ok(connections)
+    }
+    
+    /// 计算连接权重
+    fn calculate_connection_weight(&self, conn: &ConnectionInfo) -> f64 {
+        let mut weight = 1.0;
+        
+        // 基于协议类型调整权重
+        match conn.protocol.as_str() {
+            "tcp" => {
+                // TCP连接根据状态调整权重
+                match conn.state.as_str() {
+                    "01" => weight *= 2.0, // ESTABLISHED - 活跃连接，权重更高
+                    "02" => weight *= 0.5, // SYN_SENT
+                    "03" => weight *= 0.5, // SYN_RECV
+                    "08" => weight *= 0.1, // CLOSE_WAIT
+                    "0A" => weight *= 0.1, // LISTEN - 监听状态，流量较少
+                    _ => weight *= 1.0,
+                }
+            }
+            "udp" => {
+                weight *= 1.5; // UDP连接通常更活跃
+            }
+            _ => {}
+        }
+        
+        // 基于历史流量调整权重
+        let total_historical = conn.historical_rx + conn.historical_tx;
+        if total_historical > 0 {
+            // 流量越大，权重越高（对数缩放避免过度倾斜）
+            weight *= (total_historical as f64).log10().max(1.0);
+        }
+        
+        // 基于最近活动时间调整权重
+        let inactive_duration = Instant::now().duration_since(conn.last_activity);
+        if inactive_duration.as_secs() > 60 {
+            weight *= 0.5; // 长时间不活跃的连接权重降低
+        }
+        
+        weight
+    }
+
+    /// 解析TCP连接详细信息
+    async fn parse_proc_net_tcp_with_info(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
+        let mut connections = Vec::new();
+        
+        // 解析IPv4 TCP连接
+        if let Ok(content) = tokio::fs::read_to_string("/proc/net/tcp").await {
+            connections.extend(self.parse_net_file_with_info(&content, "tcp", false)?);
+        }
+        
+        // 解析IPv6 TCP连接
+        if let Ok(content) = tokio::fs::read_to_string("/proc/net/tcp6").await {
+            connections.extend(self.parse_net_file_with_info(&content, "tcp", true)?);
+        }
+        
+        Ok(connections)
+    }
+
+    /// 解析UDP连接详细信息
+    async fn parse_proc_net_udp_with_info(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
+        let mut connections = Vec::new();
+        
+        // 解析IPv4 UDP连接
+        if let Ok(content) = tokio::fs::read_to_string("/proc/net/udp").await {
+            connections.extend(self.parse_net_file_with_info(&content, "udp", false)?);
+        }
+        
+        // 解析IPv6 UDP连接
+        if let Ok(content) = tokio::fs::read_to_string("/proc/net/udp6").await {
+            connections.extend(self.parse_net_file_with_info(&content, "udp", true)?);
+        }
+        
+        Ok(connections)
+    }
+
+    /// 解析网络文件内容并提取详细信息
+    fn parse_net_file_with_info(
+        &self, 
+        content: &str, 
+        protocol: &str, 
+        is_ipv6: bool
+    ) -> anyhow::Result<Vec<ConnectionInfo>> {
+        let mut connections = Vec::new();
+        
+        for line in content.lines().skip(1) { // 跳过标题行
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() < 4 {
+                continue;
+            }
+            
+            // 解析本地地址
+            if let Ok((ip, port)) = self.parse_address_with_port(fields[1], is_ipv6) {
+                if !ip.is_loopback() && !ip.is_unspecified() {
+                    // 获取历史流量统计
+                    let (historical_rx, historical_tx) = if let Some(stats) = self.stats.get(&ip) {
+                        (stats.rx_bytes, stats.tx_bytes)
+                    } else {
+                        (0, 0)
+                    };
+                    
+                    connections.push(ConnectionInfo {
+                        ip,
+                        port,
+                        protocol: protocol.to_string(),
+                        state: fields[3].to_string(), // 连接状态
+                        last_activity: Instant::now(),
+                        historical_rx,
+                        historical_tx,
+                        weight: 1.0, // 将在后续计算
+                    });
+                }
+            }
+        }
+        
+        Ok(connections)
+    }
+    
+    /// 解析带端口的地址
+    fn parse_address_with_port(&self, addr_str: &str, is_ipv6: bool) -> anyhow::Result<(IpAddr, u16)> {
+        let parts: Vec<&str> = addr_str.split(':').collect();
+        if parts.len() != 2 {
+            anyhow::bail!("无效的地址格式: {}", addr_str);
+        }
+        
+        let addr_hex = parts[0];
+        let port = u16::from_str_radix(parts[1], 16)?;
+        
+        let ip = if is_ipv6 {
+            // IPv6地址解析
+            if addr_hex.len() != 32 {
+                anyhow::bail!("无效的IPv6地址长度: {}", addr_hex);
+            }
+            
+            let mut bytes = [0u8; 16];
+            for i in 0..16 {
+                let hex_byte = &addr_hex[i*2..i*2+2];
+                bytes[i] = u8::from_str_radix(hex_byte, 16)?;
+            }
+            
+            IpAddr::V6(Ipv6Addr::from(bytes))
+        } else {
+            // IPv4地址解析
+            if addr_hex.len() != 8 {
+                anyhow::bail!("无效的IPv4地址长度: {}", addr_hex);
+            }
+            
+            let addr_u32 = u32::from_str_radix(addr_hex, 16)?;
+            let bytes = addr_u32.to_le_bytes(); // 小端序
+            IpAddr::V4(Ipv4Addr::from(bytes))
+        };
+        
+        Ok((ip, port))
+    }
+}
 /// 运行主监控逻辑
 pub async fn run(cfg: Config, fw: &Arc<RwLock<Firewall>>) -> anyhow::Result<()> {
     // 并发安全的 IP 流量统计表

@@ -1,7 +1,7 @@
 // src/config.rs
 use chrono::Duration;
 use serde::Deserialize;
-use std::{fs, path::Path};
+use std::{fs, path::Path, collections::HashSet, net::IpAddr};
 
 /// 单条规则动作类型：限速或封禁
 #[derive(Deserialize, Debug, Clone)]
@@ -21,6 +21,18 @@ pub struct Rule {
     pub threshold_bps: u64,
     /// 触发动作
     pub action: Action,
+    excluded_ips: Option<HashSet<IpAddr>>,
+}
+
+
+impl Rule {
+    pub fn is_excluded(&self, ip: &IpAddr) -> bool {
+        if let Some(excluded_ips) = &self.excluded_ips {
+excluded_ips.contains(ip)
+        } else { 
+            false
+        }
+    }
 }
 
 /// 全局配置
@@ -49,6 +61,7 @@ impl Config {
         let text = fs::read_to_string(path)?;
         // 解析为 Config 结构
         let cfg: Config = toml::from_str(&text)?;
+        dbg!(&cfg);
         Ok(cfg)
     }
 }

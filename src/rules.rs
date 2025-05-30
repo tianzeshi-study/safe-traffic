@@ -4,7 +4,7 @@ use crate::controller::Firewall;
 use crate::monitor::TrafficStats;
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
-use log::info;
+use log::{info, debug};
 use std::{net::IpAddr, sync::Arc};
 
 /// 单 IP 的滑动窗口记录
@@ -40,7 +40,10 @@ impl RuleEngine {
         // 遍历每个 IP 的最新流量
         for entry in self.stats.iter() {
             let ip = *entry.key();
-            let bps = entry.value().tx_bytes;
+            
+                        
+            // let bps = entry.value().tx_bytes;
+            let bps = entry.value().rx_bytes;
             // 获取或创建滑动窗口
             let mut win = self.windows.entry(ip).or_insert_with(|| Window {
                 buffer: vec![0; 60], // 最多支持 60 秒窗口
@@ -56,6 +59,11 @@ impl RuleEngine {
             }
             // 对每条规则进行检测
             for rule in &self.rules {
+                if rule.is_excluded(&ip) {
+                debug!("跳过排除的 IP: {}", ip);
+                continue;
+            }
+
                 let window_size = rule.window_secs as usize;
                 // 计算滑动窗口内总流量
                 let sum: u64 = win
@@ -85,3 +93,4 @@ impl RuleEngine {
         Ok(())
     }
 }
+
