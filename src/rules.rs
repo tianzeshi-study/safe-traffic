@@ -1,7 +1,7 @@
 // src/rules.rs
 use crate::config::Rule;
-use crate::monitor::TrafficStats;
 use crate::controller::Firewall;
+use crate::monitor::TrafficStats;
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use log::info;
@@ -74,7 +74,7 @@ impl RuleEngine {
                             fw.limit(ip, kbps).await?;
                         }
                         crate::config::Action::Ban { seconds } => {
-                            info!("Banned  {} for {} seconds", ip, seconds);
+                            info!("Ban  {} for {} seconds", ip, seconds);
                             let duration = Duration::seconds(seconds as i64);
                             fw.ban(ip, duration).await?;
                         }

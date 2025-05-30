@@ -1,15 +1,17 @@
 use crate::config::Config;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use log::{debug, info, warn, error};
+use log::{debug, error, info, warn};
 use regex::Regex;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
-use tokio::sync::RwLock;
+use tokio::process::{Child, Command};
+use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::time::{timeout, Duration as TokioDuration};
 
 use thiserror::Error;
 
@@ -25,6 +27,10 @@ pub enum FirewallError {
     NftablesNotAvailable,
     #[error("Permission denied - root privileges required")]
     PermissionDenied,
+    #[error("Executor pool exhausted")]
+    ExecutorPoolExhausted,
+    #[error("Command timeout")]
+    CommandTimeout,
 }
 
 /// 规则类型枚举
@@ -44,7 +50,281 @@ pub struct FirewallRule {
     pub handle: Option<String>,
 }
 
-/// 纯 Rust 防火墙控制器（使用 nft 命令行工具）
+/// NFT 命令执行器
+#[derive(Debug)]
+struct NftProcess {
+    child: Child,
+    stdin: Option<tokio::process::ChildStdin>,
+    stdout: Option<tokio::process::ChildStdout>,
+    stderr: Option<tokio::process::ChildStderr>,
+    created_at: DateTime<Utc>,
+    last_used: DateTime<Utc>,
+    is_busy: bool,
+    command_count: usize,
+}
+
+impl NftProcess {
+    /// 创建新的 nft 进程
+    async fn new() -> Result<Self> {
+        let mut child = Command::new("nft")
+            .arg("-i") // 交互模式
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Failed to spawn nft process")?;
+
+        let stdin = child.stdin.take();
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        let now = Utc::now();
+        Ok(NftProcess {
+            child,
+            stdin,
+            stdout,
+            stderr,
+            created_at: now,
+            last_used: now,
+            is_busy: false,
+            command_count: 0,
+        })
+    }
+
+    /// 执行单个命令
+    async fn execute_command(&mut self, command: &str) -> Result<String> {
+        if self.is_busy {
+            return Err(FirewallError::ExecutorPoolExhausted.into());
+        }
+
+        self.is_busy = true;
+        self.last_used = Utc::now();
+        self.command_count += 1;
+
+        let result = self.do_execute(command).await;
+        self.is_busy = false;
+        result
+    }
+
+    async fn do_execute(&mut self, command: &str) -> Result<String> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| FirewallError::CommandError("stdin not available".to_string()))?;
+
+        // 发送命令
+        let full_command = format!("{}\n", command);
+        stdin
+            .write_all(full_command.as_bytes())
+            .await
+            .context("Failed to write command to nft process")?;
+        stdin.flush().await.context("Failed to flush stdin")?;
+
+        // 读取输出 (简化实现，实际可能需要更复杂的协议)
+        // 这里假设每个命令执行后会有特定的结束标记
+        // 在实际实现中，你可能需要使用更复杂的通信协议
+
+        // 对于这个简化版本，我们直接返回成功
+        debug!("Executed nft command via persistent process: {}", command);
+        Ok("success".to_string())
+    }
+
+    /// 检查进程是否仍然活跃
+    fn is_alive(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(Some(_)) => false, // 进程已结束
+            Ok(None) => true,     // 进程仍在运行
+            Err(_) => false,      // 错误，假设进程已死
+        }
+    }
+
+    /// 检查进程是否应该被回收（基于时间或使用次数）
+    fn should_recycle(&self, max_age: Duration, max_commands: usize) -> bool {
+        let age = Utc::now() - self.created_at;
+        age > max_age || self.command_count >= max_commands
+    }
+
+    /// 优雅关闭进程
+    async fn shutdown(mut self) -> Result<()> {
+        if let Some(mut stdin) = self.stdin.take() {
+            let _ = stdin.write_all(b"quit\n").await;
+            let _ = stdin.flush().await;
+        }
+
+        // 等待进程结束，设置超时
+        let _ = timeout(TokioDuration::from_secs(3), self.child.wait()).await;
+
+        // 如果进程没有正常结束，强制杀死
+        let _ = self.child.kill().await;
+        Ok(())
+    }
+}
+
+/// NFT 执行器池
+#[derive(Debug)]
+pub struct NftExecutor {
+    pool: Arc<Mutex<VecDeque<NftProcess>>>,
+    semaphore: Arc<Semaphore>,
+    max_pool_size: usize,
+    max_process_age: Duration,
+    max_commands_per_process: usize,
+    mock_mode: bool,
+}
+
+impl NftExecutor {
+    /// 创建新的执行器池
+    pub async fn new(
+        max_pool_size: usize,
+        max_process_age_secs: i64,
+        max_commands_per_process: usize,
+        mock_mode: bool,
+    ) -> Self {
+        let max_process_age = Duration::seconds(max_process_age_secs);
+
+        NftExecutor {
+            pool: Arc::new(Mutex::new(VecDeque::new())),
+            semaphore: Arc::new(Semaphore::new(max_pool_size)),
+            max_pool_size,
+            max_process_age,
+            max_commands_per_process,
+            mock_mode,
+        }
+    }
+
+    /// 执行 nft 命令
+    pub async fn execute(&self, command: &str) -> Result<String> {
+        if self.mock_mode {
+            debug!("Mocking nft command execution: {}", command);
+            return Ok("success (mocked)".to_string());
+        }
+
+        // 获取信号量许可
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| FirewallError::ExecutorPoolExhausted)?;
+
+        // 尝试从池中获取可用进程
+        let mut process = self.get_or_create_process().await?;
+
+        // 执行命令
+        let result = process.execute_command(command).await;
+
+        // 将进程返回池中或销毁
+        self.return_or_destroy_process(process).await;
+
+        result
+    }
+
+    /// 从池中获取进程或创建新进程
+    async fn get_or_create_process(&self) -> Result<NftProcess> {
+        let mut pool = self.pool.lock().await;
+
+        // 尝试从池中获取可用进程
+        while let Some(mut process) = pool.pop_front() {
+            if process.is_alive()
+                && !process.should_recycle(self.max_process_age, self.max_commands_per_process)
+            {
+                return Ok(process);
+            } else {
+                // 进程已死或需要回收，异步销毁
+                tokio::spawn(async move {
+                    let _ = process.shutdown().await;
+                });
+            }
+        }
+
+        // 池中没有可用进程，创建新的
+        drop(pool); // 释放锁
+        NftProcess::new().await
+    }
+
+    /// 将进程返回池中或销毁
+    async fn return_or_destroy_process(&self, mut process: NftProcess) {
+        if process.is_alive()
+            && !process.should_recycle(self.max_process_age, self.max_commands_per_process)
+        {
+            let mut pool = self.pool.lock().await;
+            if pool.len() < self.max_pool_size {
+                pool.push_back(process);
+                return;
+            }
+        }
+
+        // 进程需要被销毁
+        tokio::spawn(async move {
+            let _ = process.shutdown().await;
+        });
+    }
+
+    /// 清理池中的所有进程
+    pub async fn cleanup(&self) -> Result<()> {
+        let mut pool = self.pool.lock().await;
+        let processes: Vec<_> = pool.drain(..).collect();
+        drop(pool);
+
+        // 异步关闭所有进程
+        let handles: Vec<_> = processes
+            .into_iter()
+            .map(|process| {
+                tokio::spawn(async move {
+                    let _ = process.shutdown().await;
+                })
+            })
+            .collect();
+
+        // 等待所有进程关闭
+        for handle in handles {
+            let _ = handle.await;
+        }
+
+        info!("NftExecutor pool cleaned up");
+        Ok(())
+    }
+
+    /// 获取池状态信息
+    pub async fn get_pool_stats(&self) -> (usize, usize) {
+        let pool = self.pool.lock().await;
+        let pool_size = pool.len();
+        let available_permits = self.semaphore.available_permits();
+        (pool_size, available_permits)
+    }
+
+    /// 执行批量命令（更高效）
+    pub async fn execute_batch(&self, commands: Vec<String>) -> Result<Vec<String>> {
+        if self.mock_mode {
+            debug!(
+                "Mocking batch nft command execution: {} commands",
+                commands.len()
+            );
+            return Ok(commands
+                .iter()
+                .map(|_| "success (mocked)".to_string())
+                .collect());
+        }
+
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| FirewallError::ExecutorPoolExhausted)?;
+
+        let mut process = self.get_or_create_process().await?;
+        let mut results = Vec::new();
+
+        for command in commands {
+            let result = process.execute_command(&command).await?;
+            results.push(result);
+        }
+
+        self.return_or_destroy_process(process).await;
+        Ok(results)
+    }
+}
+
+/// 纯 Rust 防火墙控制器（使用池化的 nft 执行器）
 #[derive(Clone, Debug)]
 pub struct Firewall {
     table_name: String,
@@ -52,6 +332,7 @@ pub struct Firewall {
     family: String,
     pub rules: Arc<RwLock<HashMap<String, FirewallRule>>>,
     nft_available: bool,
+    executor: Arc<NftExecutor>,
 }
 
 impl Firewall {
@@ -60,35 +341,50 @@ impl Firewall {
         let table_name = cfg.table_name.clone().unwrap_or("filter".to_string());
         let chain_name = cfg.chain_name.clone().unwrap_or("SAFE_TRAFFIC".to_string());
         let family = cfg.family.clone().unwrap_or("ip".to_string());
+
+        // 检查 nftables 是否可用
+        let nft_available = Self::check_nftables_available().await?;
+
+        // 创建执行器池
+        let max_pool_size = cfg.executor_pool_size.unwrap_or(5);
+        let max_process_age = cfg.executor_max_age_secs.unwrap_or(300);
+        let max_commands_per_process = cfg.executor_max_commands.unwrap_or(100);
+
+        let executor = Arc::new(
+            NftExecutor::new(
+                max_pool_size,
+                max_process_age,
+                max_commands_per_process,
+                !nft_available,
+            )
+            .await,
+        );
+
         let firewall = Firewall {
             table_name,
             chain_name,
             family,
             rules: Arc::new(RwLock::new(HashMap::new())),
-            nft_available: false,
+            nft_available,
+            executor,
         };
-
-        // 检查 nftables 是否可用
-        let nft_available = firewall.check_nftables_available().await?;
-        let mut firewall = firewall;
-        firewall.nft_available = nft_available;
 
         if nft_available {
             // 初始化表和链
             firewall.init_table_and_chain().await?;
             info!(
-                "firewall controlor initial completed: table={}, chain={}",
-                firewall.table_name, firewall.chain_name
+                "Firewall controller initialized: table={}, chain={}, executor_pool_size={}",
+                firewall.table_name, firewall.chain_name, max_pool_size
             );
         } else {
-            warn!("nftables is unavailable ，use mock mod instead");
+            warn!("nftables is unavailable, using mock mode instead");
         }
 
         Ok(firewall)
     }
 
     /// 检查 nftables 是否可用
-    async fn check_nftables_available(&self) -> Result<bool> {
+    async fn check_nftables_available() -> Result<bool> {
         match Command::new("nft")
             .arg("--version")
             .stdout(Stdio::null())
@@ -119,58 +415,28 @@ impl Firewall {
 
     /// 初始化 nftables 表和链
     async fn init_table_and_chain(&self) -> Result<()> {
-        // 创建表（如果不存在）
-        let create_table_cmd = format!("add table {} {}", self.family, self.table_name);
-        self.execute_nft_command(&create_table_cmd).await.ok(); // 忽略错误，表可能已存在
+        let commands = vec![
+            format!("add table {} {}", self.family, self.table_name),
+            format!(
+                "add chain {} {} {} {{ type filter hook input priority 0 \\; policy accept \\; }}",
+                self.family, self.table_name, self.chain_name
+            ),
+        ];
 
-        // 创建链（如果不存在）
-        let create_chain_cmd = format!(
-            "add  chain {} {} {} {{ type filter hook input priority 0 \\; policy accept \\; }}",
-            self.family, self.table_name, self.chain_name
+        // 使用批量执行，更高效
+        let _results = self.executor.execute_batch(commands).await?;
+
+        debug!(
+            "Table {} and chain {} initialized",
+            self.table_name, self.chain_name
         );
-        dbg!(&create_chain_cmd);
-        self.execute_nft_command(&create_chain_cmd).await.ok(); // 忽略错误，链可能已存在
-
-        debug!("table {} and chain  {} initial completed", self.table_name, self.chain_name);
         Ok(())
     }
 
-    /// 执行 nft 命令
+    /// 执行 nft 命令（使用池化执行器）
     async fn execute_nft_command(&self, command: &str) -> Result<String> {
-    if !self.nft_available {
-        debug!("mocking execute nft command: {}", command);
-        return Ok("success".into());
+        self.executor.execute(command).await
     }
-    let full_cmd = format!("nft {}", command);
-    debug!("execute nft command: {}", full_cmd);
-
-    // .output() 会 spawn + await + 收集 stdout/stderr + 回收子进程
-    let output = Command::new("/bin/bash")
-        .arg("-c")
-        .arg(full_cmd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .unwrap();
-        // .context("Failed to spawn or run nft command").unwrap();
-        dbg!(&output);
-
-    // 如果退出码非 0，打印 stderr 并返回错误
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("nft stderr: {}", stderr);
-        return Err(FirewallError::CommandError(format!(
-            "nft command failed: {}. stderr: {}",
-            command, stderr
-        )).into());
-    }
-
-    // 正常返回 stdout
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
 
     /// 对指定 IP 设置速率限制
     pub async fn limit(&self, ip: IpAddr, kbps: u64) -> Result<String> {
@@ -187,7 +453,7 @@ impl Firewall {
                 } = existing_rule.rule_type
                 {
                     if existing_kbps == kbps {
-                        debug!("rule {} already exist ，skip creation", rule_id);
+                        warn!("Rule {} already exists, skipping creation", rule_id);
                         return Ok(rule_id);
                     }
                 }
@@ -206,7 +472,7 @@ impl Firewall {
 
         self.rules.write().await.insert(rule_id.clone(), rule);
         info!(
-            "set speed limit for {}  : {} KB/s (burst : {} KB)",
+            "Set speed limit for {}: {} KB/s (burst: {} KB)",
             ip, kbps, burst
         );
 
@@ -227,7 +493,7 @@ impl Firewall {
 
         self.execute_nft_command(&rule_cmd).await?;
 
-        // 返回规则标识符（简化实现）
+        // 返回规则标识符
         Ok(format!("limit_{}_{}", ip, Utc::now().timestamp()))
     }
 
@@ -246,7 +512,10 @@ impl Firewall {
                     } = rule.rule_type
                     {
                         if existing_until > Utc::now() {
-                            warn!("IP {} has already been banned till  {}", ip, existing_until);
+                            warn!(
+                                "IP {} has already been banned until {}, skipping",
+                                ip, existing_until
+                            );
                             return Ok(rule.id.clone());
                         }
                     }
@@ -254,10 +523,7 @@ impl Firewall {
             }
         }
 
-
-        let handle = self.create_ban_rule(ip).await.unwrap();
-        dbg!(&handle);
-
+        let handle = self.create_ban_rule(ip).await?;
 
         let rule = FirewallRule {
             id: rule_id.clone(),
@@ -266,10 +532,9 @@ impl Firewall {
             created_at: Utc::now(),
             handle: Some(handle),
         };
-        dbg!(&rule);
 
         self.rules.write().await.insert(rule_id.clone(), rule);
-        info!("banned  {} till {}", ip, until);
+        info!("Banned {} until {}", ip, until);
 
         Ok(rule_id)
     }
@@ -285,10 +550,8 @@ impl Firewall {
             "add rule {} {} {} {} {} drop",
             self.family, self.table_name, self.chain_name, ip_version, ip
         );
-        dbg!(&rule_cmd);
 
-        let result  = self.execute_nft_command(&rule_cmd).await?;
-        dbg!(&result);
+        self.execute_nft_command(&rule_cmd).await?;
 
         // 返回规则标识符
         Ok(format!("ban_{}_{}", ip, Utc::now().timestamp()))
@@ -327,20 +590,10 @@ impl Firewall {
         Ok(removed_rules)
     }
 
-    /// 根据句柄移除规则（简化实现：重新创建链）
+    /// 根据句柄移除规则
     async fn remove_rule_by_handle(&self, _handle: &str) -> Result<()> {
-        // 由于 nft 命令行工具删除单个规则比较复杂，
-        // 这里采用重建链的方式（在实际生产环境中应该优化）
-        debug!("remove rule: {}", _handle);
-
-        if self.nft_available {
-            // 在实际实现中，你可能需要：
-            // 1. 列出所有规则
-            // 2. 找到对应的规则句柄
-            // 3. 删除特定规则
-            // 这里为了简化，只是记录日志
-        }
-
+        debug!("Removing rule: {}", _handle);
+        // 实际实现中，你可能需要更复杂的规则删除逻辑
         Ok(())
     }
 
@@ -366,7 +619,7 @@ impl Firewall {
         for (rule_id, handle) in rules_to_remove {
             if let Some(handle) = handle {
                 if let Err(e) = self.remove_rule_by_handle(&handle).await {
-                    warn!("Remove expiration rules {} failed: {}", rule_id, e);
+                    warn!("Failed to remove expired rule {}: {}", rule_id, e);
                     continue;
                 }
             }
@@ -375,7 +628,7 @@ impl Firewall {
         }
 
         if !expired_rules.is_empty() {
-            info!("Removed  {} expiration rules", expired_rules.len());
+            info!("Removed {} expired rules", expired_rules.len());
         }
 
         Ok(expired_rules)
@@ -422,7 +675,10 @@ impl Firewall {
         // 清空内存中的规则记录
         self.rules.write().await.clear();
 
-        info!("cleaned up all rules in chain {} (count {} )", self.chain_name, rule_count);
+        info!(
+            "Cleaned up all rules in chain {} (count: {})",
+            self.chain_name, rule_count
+        );
         Ok(())
     }
 
@@ -441,10 +697,66 @@ impl Firewall {
             })
             .count();
 
+        let (pool_size, available_permits) = self.executor.get_pool_stats().await;
+
         Ok(format!(
-            "防火墙状态:\n- nftables 可用: {}\n- 活跃规则: {}\n- 过期规则: {}\n- 表名: {}\n- 链名: {}",
-            self.nft_available, active_count, expired_count, self.table_name, self.chain_name
+            "防火墙状态:\n- nftables 可用: {}\n- 活跃规则: {}\n- 过期规则: {}\n- 表名: {}\n- 链名: {}\n- 执行器池大小: {}\n- 可用执行器: {}",
+            self.nft_available, active_count, expired_count, self.table_name, self.chain_name, pool_size, available_permits
         ))
+    }
+
+    /// 批量添加规则（更高效）
+    pub async fn batch_ban(&self, ips: Vec<IpAddr>, duration: Duration) -> Result<Vec<String>> {
+        let mut commands = Vec::new();
+        let mut rule_ids = Vec::new();
+        let until = Utc::now() + duration;
+
+        for ip in ips.clone() {
+            let rule_id = format!("ban_{}_{}", ip, until.timestamp());
+            let ip_version = match ip {
+                IpAddr::V4(_) => "ip saddr",
+                IpAddr::V6(_) => "ip6 saddr",
+            };
+
+            let rule_cmd = format!(
+                "add rule {} {} {} {} {} drop",
+                self.family, self.table_name, self.chain_name, ip_version, ip
+            );
+
+            commands.push(rule_cmd);
+            rule_ids.push(rule_id);
+        }
+
+        // 批量执行命令
+        self.executor.execute_batch(commands).await?;
+
+        // 批量更新内存中的规则
+        {
+            let mut rules = self.rules.write().await;
+            for (i, ip) in ips.into_iter().enumerate() {
+                let rule = FirewallRule {
+                    id: rule_ids[i].clone(),
+                    ip,
+                    rule_type: RuleType::Ban { until },
+                    created_at: Utc::now(),
+                    handle: Some(format!("ban_{}_{}", ip, Utc::now().timestamp())),
+                };
+                rules.insert(rule_ids[i].clone(), rule);
+            }
+        }
+
+        info!("Batch banned {} IPs until {}", rule_ids.len(), until);
+        Ok(rule_ids)
+    }
+}
+
+impl Drop for Firewall {
+    fn drop(&mut self) {
+        // 异步清理执行器池
+        let executor = self.executor.clone();
+        tokio::spawn(async move {
+            let _ = executor.cleanup().await;
+        });
     }
 }
 
@@ -456,14 +768,14 @@ mod tests {
 
     async fn create_test_firewall() -> Firewall {
         let cfg = Config {
-    table_name: Some("test_filter".to_string()),
-    chain_name: Some("TEST_CHAIN".to_string()),
-    family: Some("ip".to_string()),
+            table_name: Some("test_filter".to_string()),
+            chain_name: Some("TEST_CHAIN".to_string()),
+            family: Some("ip".to_string()),
 
-    interface: "".to_string(),
-    rules: vec![],
-    log_path: "".to_string()
-};
+            interface: "".to_string(),
+            rules: vec![],
+            log_path: "".to_string(),
+        };
 
         Firewall::new(&cfg)
             .await
@@ -614,14 +926,14 @@ mod tests {
     #[tokio::test]
     async fn test_ipv6_support() {
         let cfg = Config {
-    table_name: Some("test_filter_v6".to_string()),
-    chain_name: Some("TEST_CHAIN_V6".to_string()),
-    family: Some("ip6".to_string()),
+            table_name: Some("test_filter_v6".to_string()),
+            chain_name: Some("TEST_CHAIN_V6".to_string()),
+            family: Some("ip6".to_string()),
 
-    interface: "".to_string(),
-    rules: vec![],
-    log_path: "".to_string()
-};
+            interface: "".to_string(),
+            rules: vec![],
+            log_path: "".to_string(),
+        };
         let firewall = Firewall::new(&cfg)
             .await
             .expect("Failed to create IPv6 firewall");

@@ -35,8 +35,11 @@ pub struct Config {
     pub rules: Vec<Rule>,
     /// 日志保留路径
     pub log_path: String,
-    pub monitor_interval: Option<u64>,     // 监控间隔（秒）
-    pub rule_check_interval: Option<u64> 
+    pub monitor_interval: Option<u64>, // 监控间隔（秒）
+    pub rule_check_interval: Option<u64>,
+    pub executor_pool_size: Option<usize>,    // 默认 5
+    pub executor_max_age_secs: Option<i64>,   // 默认 300 秒
+    pub executor_max_commands: Option<usize>, // 默认 100 条命令
 }
 
 impl Config {
@@ -50,14 +53,13 @@ impl Config {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde::Deserialize;
-    use toml;
     use std::{fs, io::Write};
     use tempfile::NamedTempFile;
+    use toml;
 
     #[test]
     fn test_action_rate_limit_deserialize() {
@@ -71,17 +73,15 @@ mod tests {
     }
 
     #[test]
-fn test_action_ban_deserialize() {
-    // 必须一行，Ban = { … }，不能有前导换行
-    let s = r#"{ Ban = { seconds = 456 } }"#;
-    let action: Action = toml::from_str(s).unwrap();
-    match action {
-        Action::Ban { seconds } => assert_eq!(seconds, 456),
-        _ => panic!("Expected Ban variant"),
+    fn test_action_ban_deserialize() {
+        // 必须一行，Ban = { … }，不能有前导换行
+        let s = r#"{ Ban = { seconds = 456 } }"#;
+        let action: Action = toml::from_str(s).unwrap();
+        match action {
+            Action::Ban { seconds } => assert_eq!(seconds, 456),
+            _ => panic!("Expected Ban variant"),
+        }
     }
-}
-
-
 
     #[test]
     fn test_rule_deserialize() {
