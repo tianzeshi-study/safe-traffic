@@ -9,6 +9,8 @@ use config::Config;
 use env_logger::Env;
 use log::info;
 use tokio::signal;
+use tokio::sync::RwLock;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(author, version, about = "Safe Server Traffic 自动限流与封禁工具")]
@@ -24,16 +26,16 @@ async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     // 解析命令行参数
     let args = Args::parse();
-    info!("加载配置文件: {}", &args.config);
+    info!("Loading configuration file: {}", &args.config);
     // 读取并验证配置
     let cfg = Config::from_file(&args.config)?;
     // 启动防火墙控制器
-    let mut fw = controller::Firewall::new(&cfg).await?;
+    let fw = Arc::new(RwLock::new(controller::Firewall::new(&cfg).await?));
     // 启动流量监控与规则引擎
-    monitor::run(cfg, &mut fw).await?;
+    monitor::run(cfg, &fw).await?;
     // 等待终止信号（Ctrl+C）
     signal::ctrl_c().await?;
     info!("收到退出信号，正在清理...");
-    fw.cleanup().await?;
+    fw.write().await.cleanup().await?;
     Ok(())
 }

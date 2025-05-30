@@ -1,7 +1,7 @@
 use crate::config::Config;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 use regex::Regex;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -45,12 +45,12 @@ pub struct FirewallRule {
 }
 
 /// 纯 Rust 防火墙控制器（使用 nft 命令行工具）
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Firewall {
     table_name: String,
     chain_name: String,
     family: String,
-    rules: Arc<RwLock<HashMap<String, FirewallRule>>>,
+    pub rules: Arc<RwLock<HashMap<String, FirewallRule>>>,
     nft_available: bool,
 }
 
@@ -77,11 +77,11 @@ impl Firewall {
             // 初始化表和链
             firewall.init_table_and_chain().await?;
             info!(
-                "防火墙控制器初始化完成: table={}, chain={}",
+                "firewall controlor initial completed: table={}, chain={}",
                 firewall.table_name, firewall.chain_name
             );
         } else {
-            warn!("nftables 不可用，将使用模拟模式");
+            warn!("nftables is unavailable ，use mock mod instead");
         }
 
         Ok(firewall)
@@ -125,64 +125,57 @@ impl Firewall {
 
         // 创建链（如果不存在）
         let create_chain_cmd = format!(
-            "add chain {} {} {} {{ type filter hook input priority 0\\; policy accept\\; }}",
+            "add  chain {} {} {} {{ type filter hook input priority 0 \\; policy accept \\; }}",
             self.family, self.table_name, self.chain_name
         );
+        dbg!(&create_chain_cmd);
         self.execute_nft_command(&create_chain_cmd).await.ok(); // 忽略错误，链可能已存在
 
-        debug!("表 {} 和链 {} 初始化完成", self.table_name, self.chain_name);
+        debug!("table {} and chain  {} initial completed", self.table_name, self.chain_name);
         Ok(())
     }
 
     /// 执行 nft 命令
     async fn execute_nft_command(&self, command: &str) -> Result<String> {
-        if !self.nft_available {
-            // 模拟模式：返回成功
-            debug!("模拟执行 nft 命令: {}", command);
-            return Ok("success".to_string());
-        }
-
-        debug!("执行 nft 命令: {}", command);
-
-        let mut child = Command::new("nft")
-            .arg(command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("Failed to spawn nft command")?;
-
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-
-        let mut stdout_reader = BufReader::new(stdout);
-        let mut stderr_reader = BufReader::new(stderr);
-
-        let mut stdout_output = String::new();
-        let mut stderr_output = String::new();
-
-        // 读取输出
-        tokio::try_join!(
-            stdout_reader.read_to_string(&mut stdout_output),
-            stderr_reader.read_to_string(&mut stderr_output)
-        )?;
-
-        let status = child.wait().await?;
-
-        if status.success() {
-            Ok(stdout_output)
-        } else {
-            Err(FirewallError::CommandError(format!(
-                "nft command failed: {}. stderr: {}",
-                command, stderr_output
-            ))
-            .into())
-        }
+    if !self.nft_available {
+        debug!("mocking execute nft command: {}", command);
+        return Ok("success".into());
     }
+    let full_cmd = format!("nft {}", command);
+    debug!("execute nft command: {}", full_cmd);
+
+    // .output() 会 spawn + await + 收集 stdout/stderr + 回收子进程
+    let output = Command::new("/bin/bash")
+        .arg("-c")
+        .arg(full_cmd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+        // .context("Failed to spawn or run nft command").unwrap();
+        dbg!(&output);
+
+    // 如果退出码非 0，打印 stderr 并返回错误
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!("nft stderr: {}", stderr);
+        return Err(FirewallError::CommandError(format!(
+            "nft command failed: {}. stderr: {}",
+            command, stderr
+        )).into());
+    }
+
+    // 正常返回 stdout
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 
     /// 对指定 IP 设置速率限制
     pub async fn limit(&self, ip: IpAddr, kbps: u64) -> Result<String> {
         let rule_id = format!("limit_{}_{}", ip, kbps);
-        let burst = kbps.max(1024) / 10;
+        let burst = kbps.min(1024) / 10;
 
         // 检查是否已存在相同规则
         {
@@ -194,7 +187,7 @@ impl Firewall {
                 } = existing_rule.rule_type
                 {
                     if existing_kbps == kbps {
-                        debug!("规则 {} 已存在，跳过创建", rule_id);
+                        debug!("rule {} already exist ，skip creation", rule_id);
                         return Ok(rule_id);
                     }
                 }
@@ -213,7 +206,7 @@ impl Firewall {
 
         self.rules.write().await.insert(rule_id.clone(), rule);
         info!(
-            "已为 {} 设置速率限制: {} KB/s (突发: {} KB)",
+            "set speed limit for {}  : {} KB/s (burst : {} KB)",
             ip, kbps, burst
         );
 
@@ -253,7 +246,7 @@ impl Firewall {
                     } = rule.rule_type
                     {
                         if existing_until > Utc::now() {
-                            warn!("IP {} 已被封禁至 {}", ip, existing_until);
+                            warn!("IP {} has already been banned till  {}", ip, existing_until);
                             return Ok(rule.id.clone());
                         }
                     }
@@ -261,7 +254,10 @@ impl Firewall {
             }
         }
 
-        let handle = self.create_ban_rule(ip).await?;
+
+        let handle = self.create_ban_rule(ip).await.unwrap();
+        dbg!(&handle);
+
 
         let rule = FirewallRule {
             id: rule_id.clone(),
@@ -270,9 +266,10 @@ impl Firewall {
             created_at: Utc::now(),
             handle: Some(handle),
         };
+        dbg!(&rule);
 
         self.rules.write().await.insert(rule_id.clone(), rule);
-        info!("已封禁 {} 至 {}", ip, until);
+        info!("banned  {} till {}", ip, until);
 
         Ok(rule_id)
     }
@@ -288,8 +285,10 @@ impl Firewall {
             "add rule {} {} {} {} {} drop",
             self.family, self.table_name, self.chain_name, ip_version, ip
         );
+        dbg!(&rule_cmd);
 
-        self.execute_nft_command(&rule_cmd).await?;
+        let result  = self.execute_nft_command(&rule_cmd).await?;
+        dbg!(&result);
 
         // 返回规则标识符
         Ok(format!("ban_{}_{}", ip, Utc::now().timestamp()))
@@ -322,7 +321,7 @@ impl Firewall {
         }
 
         if !removed_rules.is_empty() {
-            info!("已解封 IP: {}", ip);
+            info!("Unblocked IP: {}", ip);
         }
 
         Ok(removed_rules)
@@ -332,7 +331,7 @@ impl Firewall {
     async fn remove_rule_by_handle(&self, _handle: &str) -> Result<()> {
         // 由于 nft 命令行工具删除单个规则比较复杂，
         // 这里采用重建链的方式（在实际生产环境中应该优化）
-        debug!("移除规则: {}", _handle);
+        debug!("remove rule: {}", _handle);
 
         if self.nft_available {
             // 在实际实现中，你可能需要：
@@ -367,7 +366,7 @@ impl Firewall {
         for (rule_id, handle) in rules_to_remove {
             if let Some(handle) = handle {
                 if let Err(e) = self.remove_rule_by_handle(&handle).await {
-                    warn!("移除过期规则 {} 失败: {}", rule_id, e);
+                    warn!("Remove expiration rules {} failed: {}", rule_id, e);
                     continue;
                 }
             }
@@ -376,7 +375,7 @@ impl Firewall {
         }
 
         if !expired_rules.is_empty() {
-            info!("清理了 {} 个过期规则", expired_rules.len());
+            info!("Removed  {} expiration rules", expired_rules.len());
         }
 
         Ok(expired_rules)
@@ -409,7 +408,7 @@ impl Firewall {
         };
 
         if rule_count == 0 {
-            info!("没有规则需要清理");
+            info!("No rules to clean up");
             return Ok(());
         }
 
@@ -423,7 +422,7 @@ impl Firewall {
         // 清空内存中的规则记录
         self.rules.write().await.clear();
 
-        info!("已清理所有 {} 规则 (共 {} 条)", self.chain_name, rule_count);
+        info!("cleaned up all rules in chain {} (count {} )", self.chain_name, rule_count);
         Ok(())
     }
 
@@ -456,7 +455,17 @@ mod tests {
     use tokio::time::{sleep, Duration as TokioDuration};
 
     async fn create_test_firewall() -> Firewall {
-        Firewall::new(Some("test_filter"), Some("TEST_CHAIN"), Some("ip"))
+        let cfg = Config {
+    table_name: Some("test_filter".to_string()),
+    chain_name: Some("TEST_CHAIN".to_string()),
+    family: Some("ip".to_string()),
+
+    interface: "".to_string(),
+    rules: vec![],
+    log_path: "".to_string()
+};
+
+        Firewall::new(&cfg)
             .await
             .expect("Failed to create test firewall")
     }
@@ -472,7 +481,7 @@ mod tests {
     #[tokio::test]
     async fn test_limit_rule() {
         let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 110));
 
         let rule_id = firewall
             .limit(ip, 1000)
@@ -533,7 +542,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_expired() {
         let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 500));
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
 
         // 创建短期封禁
         firewall
@@ -552,7 +561,7 @@ mod tests {
     #[tokio::test]
     async fn test_unban() {
         let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 300));
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 80));
 
         // 封禁
         firewall
@@ -582,7 +591,7 @@ mod tests {
     #[tokio::test]
     async fn test_duplicate_rules() {
         let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 400));
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 90));
 
         let rule_id1 = firewall
             .limit(ip, 500)
@@ -604,7 +613,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipv6_support() {
-        let firewall = Firewall::new(Some("test_filter_v6"), Some("TEST_CHAIN_V6"), Some("ip6"))
+        let cfg = Config {
+    table_name: Some("test_filter_v6".to_string()),
+    chain_name: Some("TEST_CHAIN_V6".to_string()),
+    family: Some("ip6".to_string()),
+
+    interface: "".to_string(),
+    rules: vec![],
+    log_path: "".to_string()
+};
+        let firewall = Firewall::new(&cfg)
             .await
             .expect("Failed to create IPv6 firewall");
 

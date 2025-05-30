@@ -1,5 +1,6 @@
 // src/rules.rs
 use crate::config::Rule;
+use crate::monitor::TrafficStats;
 use crate::controller::Firewall;
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
@@ -19,13 +20,13 @@ struct Window {
 /// 规则引擎管理所有 IP 的窗口并执行动作
 pub struct RuleEngine {
     rules: Vec<Rule>,
-    stats: Arc<DashMap<IpAddr, u64>>,
+    stats: Arc<DashMap<IpAddr, TrafficStats>>,
     windows: DashMap<IpAddr, Window>,
 }
 
 impl RuleEngine {
     /// 新建实例
-    pub fn new(rules: Vec<Rule>, stats: Arc<DashMap<IpAddr, u64>>, _fw: Firewall) -> Self {
+    pub fn new(rules: Vec<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
         RuleEngine {
             rules,
             stats,
@@ -39,7 +40,7 @@ impl RuleEngine {
         // 遍历每个 IP 的最新流量
         for entry in self.stats.iter() {
             let ip = *entry.key();
-            let bps = *entry.value();
+            let bps = entry.value().tx_bytes;
             // 获取或创建滑动窗口
             let mut win = self.windows.entry(ip).or_insert_with(|| Window {
                 buffer: vec![0; 60], // 最多支持 60 秒窗口
@@ -69,11 +70,11 @@ impl RuleEngine {
                 if avg_bps > rule.threshold_bps {
                     match rule.action {
                         crate::config::Action::RateLimit { kbps } => {
-                            info!("对 {} 限速到 {}kbps", ip, kbps);
+                            info!("Limited the speed of {} to {}kbps", ip, kbps);
                             fw.limit(ip, kbps).await?;
                         }
                         crate::config::Action::Ban { seconds } => {
-                            info!("对 {} 封禁 {} 秒", ip, seconds);
+                            info!("Banned  {} for {} seconds", ip, seconds);
                             let duration = Duration::seconds(seconds as i64);
                             fw.ban(ip, duration).await?;
                         }
