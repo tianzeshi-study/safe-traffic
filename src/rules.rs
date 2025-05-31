@@ -1,10 +1,29 @@
-use crate::config::Rule;
-use crate::controller::Firewall;
-use crate::monitor::TrafficStats;
+use crate::{config::Rule, controller::Firewall};
+
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use log::{info, debug};
-use std::{net::IpAddr, sync::Arc};
+use std::{net::IpAddr, sync::Arc, time::Instant};
+
+/// 流量统计结构体
+#[derive(Debug, Clone)]
+pub struct TrafficStats {
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub last_updated: Instant,
+}
+
+impl Default for TrafficStats {
+    fn default() -> Self {
+        Self {
+            rx_bytes: 0,
+            tx_bytes: 0,
+            last_updated: Instant::now(),
+        }
+    }
+}
+
+
 
 /// 单 IP 的滑动窗口记录
 struct Window {

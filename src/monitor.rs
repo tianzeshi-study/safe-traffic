@@ -1,4 +1,4 @@
-use crate::{config::Config, controller::Firewall, rules::RuleEngine};
+use crate::{config::Config, controller::Firewall, rules::{RuleEngine, TrafficStats}};
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
 use log::{debug, error, info, warn};
@@ -13,28 +13,6 @@ use std::{
 process::Command,
 };
 use tokio::{sync::RwLock, task, time};
-
-// 网络地址族常量（因为 netlink_packet_route 0.22 没有 constants 模块）
-const AF_INET: u8 = 2; // IPv4
-const AF_INET6: u8 = 10; // IPv6
-
-/// 流量统计结构体
-#[derive(Debug, Clone)]
-pub struct TrafficStats {
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-    pub last_updated: Instant,
-}
-
-impl Default for TrafficStats {
-    fn default() -> Self {
-        Self {
-            rx_bytes: 0,
-            tx_bytes: 0,
-            last_updated: Instant::now(),
-        }
-    }
-}
 
 /// 接口统计信息
 #[derive(Debug, Clone)]

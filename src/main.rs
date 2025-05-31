@@ -3,6 +3,8 @@ mod controller; // nftables 控制
 mod logger;
 mod monitor; // 流量监控
 mod rules; // 规则引擎 // 日志记录
+mod nft;
+mod error;
 
 use clap::Parser;
 use config::Config;
