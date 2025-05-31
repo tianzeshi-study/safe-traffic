@@ -1,4 +1,3 @@
-// src/rules.rs
 use crate::config::Rule;
 use crate::controller::Firewall;
 use crate::monitor::TrafficStats;
@@ -60,7 +59,7 @@ impl RuleEngine {
             // 对每条规则进行检测
             for rule in &self.rules {
                 if rule.is_excluded(&ip) {
-                debug!("跳过排除的 IP: {}", ip);
+                debug!("skipping excluded  IP: {}", ip);
                 continue;
             }
 
@@ -77,14 +76,16 @@ impl RuleEngine {
                 // 超过阈值 => 执行动作
                 if avg_bps > rule.threshold_bps {
                     match rule.action {
-                        crate::config::Action::RateLimit { kbps } => {
+                        crate::config::Action::RateLimit { kbps, burst } => {
                             info!("Limited the speed of {} to {}kbps", ip, kbps);
                             fw.limit(ip, kbps).await?;
                         }
                         crate::config::Action::Ban { seconds } => {
                             info!("Ban  {} for {} seconds", ip, seconds);
-                            let duration = Duration::seconds(seconds as i64);
-                            fw.ban(ip, duration).await?;
+                            // let duration = Duration::seconds(seconds as i64);
+                            fw.ban(ip, seconds).await?;
+                            // fw.ban(ip, duration).await?;
+                            // fw.ban(ip).await?;
                         }
                     }
                 }

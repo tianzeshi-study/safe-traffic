@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, Action};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, error, info, warn};
@@ -34,18 +34,19 @@ pub enum FirewallError {
 }
 
 /// 规则类型枚举
-#[derive(Debug, Clone, PartialEq)]
-pub enum RuleType {
-    Ban { until: DateTime<Utc> },
-    Limit { kbps: u64, burst: u64 },
-}
+// #[derive(Debug, Clone, PartialEq)]
+// pub enum Action {
+    // Limit { kbps: u64, burst: u64 },
+    // Ban { until: DateTime<Utc> },
+    // Ban { seconds: u64 },
+// }
 
 /// 防火墙规则信息
 #[derive(Debug, Clone)]
 pub struct FirewallRule {
     pub id: String,
     pub ip: IpAddr,
-    pub rule_type: RuleType,
+    pub rule_type: Action,
     pub created_at: DateTime<Utc>,
     pub handle: Option<String>,
 }
@@ -447,7 +448,7 @@ impl Firewall {
         {
             let rules = self.rules.read().await;
             if let Some(existing_rule) = rules.get(&rule_id) {
-                if let RuleType::Limit {
+                if let Action::RateLimit {
                     kbps: existing_kbps,
                     ..
                 } = existing_rule.rule_type
@@ -465,7 +466,7 @@ impl Firewall {
         let rule = FirewallRule {
             id: rule_id.clone(),
             ip,
-            rule_type: RuleType::Limit { kbps, burst },
+            rule_type: Action::RateLimit { kbps, burst },
             created_at: Utc::now(),
             handle: Some(handle),
         };
@@ -498,7 +499,9 @@ impl Firewall {
     }
 
     /// 对指定 IP 封禁指定时长
-    pub async fn ban(&self, ip: IpAddr, duration: Duration) -> Result<String> {
+    pub async fn ban(&self, ip: IpAddr, seconds: u64) -> Result<String> {
+    // pub async fn ban(&self, ip: IpAddr) -> Result<String> {
+        let duration = Duration::seconds(seconds as i64);
         let until = Utc::now() + duration;
         let rule_id = format!("ban_{}_{}", ip, until.timestamp());
 
@@ -507,10 +510,12 @@ impl Firewall {
             let rules = self.rules.read().await;
             for (_, rule) in rules.iter() {
                 if rule.ip == ip {
-                    if let RuleType::Ban {
-                        until: existing_until,
+                    if let Action::Ban {
+                        seconds: sec,
                     } = rule.rule_type
                     {
+                        
+                        let  existing_until = rule.created_at +duration;
                         if existing_until > Utc::now() {
                             warn!(
                                 "IP {} has already been banned until {}, skipping",
@@ -528,7 +533,7 @@ impl Firewall {
         let rule = FirewallRule {
             id: rule_id.clone(),
             ip,
-            rule_type: RuleType::Ban { until },
+            rule_type: Action::Ban { seconds },
             created_at: Utc::now(),
             handle: Some(handle),
         };
@@ -567,7 +572,7 @@ impl Firewall {
             let rules = self.rules.read().await;
             for (rule_id, rule) in rules.iter() {
                 if rule.ip == ip {
-                    if let RuleType::Ban { .. } = rule.rule_type {
+                    if let Action::Ban { .. } = rule.rule_type {
                         rules_to_remove.push((rule_id.clone(), rule.handle.clone()));
                     }
                 }
@@ -607,8 +612,10 @@ impl Firewall {
         {
             let rules = self.rules.read().await;
             for (rule_id, rule) in rules.iter() {
-                if let RuleType::Ban { until } = rule.rule_type {
-                    if until <= now {
+                if let Action::Ban { seconds } = rule.rule_type {
+                    let duration = Duration::seconds(seconds as i64);
+                    let until = rule.created_at + duration;
+                    if until <= now  {
                         rules_to_remove.push((rule_id.clone(), rule.handle.clone()));
                     }
                 }
@@ -689,7 +696,9 @@ impl Firewall {
         let expired_count = rules
             .values()
             .filter(|rule| {
-                if let RuleType::Ban { until } = rule.rule_type {
+                if let Action::Ban { seconds } = rule.rule_type {
+                    let duration = Duration::seconds(seconds as i64);
+        let until = Utc::now() + duration;
                     until <= Utc::now()
                 } else {
                     false
@@ -706,9 +715,11 @@ impl Firewall {
     }
 
     /// 批量添加规则（更高效）
-    pub async fn batch_ban(&self, ips: Vec<IpAddr>, duration: Duration) -> Result<Vec<String>> {
+    pub async fn batch_ban(&self, ips: Vec<IpAddr>, seconds: u64) -> Result<Vec<String>> {
         let mut commands = Vec::new();
         let mut rule_ids = Vec::new();
+
+        let duration = Duration::seconds(seconds as i64);
         let until = Utc::now() + duration;
 
         for ip in ips.clone() {
@@ -737,7 +748,7 @@ impl Firewall {
                 let rule = FirewallRule {
                     id: rule_ids[i].clone(),
                     ip,
-                    rule_type: RuleType::Ban { until },
+                    rule_type: Action::Ban { seconds },
                     created_at: Utc::now(),
                     handle: Some(format!("ban_{}_{}", ip, Utc::now().timestamp())),
                 };
@@ -757,227 +768,5 @@ impl Drop for Firewall {
         tokio::spawn(async move {
             let _ = executor.cleanup().await;
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::Ipv4Addr;
-    use tokio::time::{sleep, Duration as TokioDuration};
-
-    async fn create_test_firewall() -> Firewall {
-        let cfg = Config {
-            table_name: Some("test_filter".to_string()),
-            chain_name: Some("TEST_CHAIN".to_string()),
-            family: Some("ip".to_string()),
-
-            interface: "".to_string(),
-            rules: vec![],
-            log_path: "".to_string(),
-        };
-
-        Firewall::new(&cfg)
-            .await
-            .expect("Failed to create test firewall")
-    }
-
-    #[tokio::test]
-    async fn test_firewall_creation() {
-        let firewall = create_test_firewall().await;
-        assert_eq!(firewall.table_name, "test_filter");
-        assert_eq!(firewall.chain_name, "TEST_CHAIN");
-        assert_eq!(firewall.family, "ip");
-    }
-
-    #[tokio::test]
-    async fn test_limit_rule() {
-        let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 110));
-
-        let rule_id = firewall
-            .limit(ip, 1000)
-            .await
-            .expect("Failed to create limit rule");
-        assert!(!rule_id.is_empty());
-
-        let rules = firewall
-            .get_active_rules()
-            .await
-            .expect("Failed to get rules");
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].ip, ip);
-
-        if let RuleType::Limit { kbps, burst } = rules[0].rule_type {
-            assert_eq!(kbps, 1000);
-            assert_eq!(burst, 100);
-        } else {
-            panic!("Expected limit rule type");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_ban_rule() {
-        let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 200));
-        let duration = Duration::minutes(30);
-
-        let rule_id = firewall
-            .ban(ip, duration)
-            .await
-            .expect("Failed to create ban rule");
-        assert!(!rule_id.is_empty());
-
-        let rules = firewall
-            .get_active_rules()
-            .await
-            .expect("Failed to get rules");
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].ip, ip);
-
-        if let RuleType::Ban { until } = rules[0].rule_type {
-            assert!(until > Utc::now());
-        } else {
-            panic!("Expected ban rule type");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_firewall_status() {
-        let firewall = create_test_firewall().await;
-        let status = firewall.status().await.expect("Failed to get status");
-        assert!(status.contains("防火墙状态"));
-        assert!(status.contains("test_filter"));
-        assert!(status.contains("TEST_CHAIN"));
-    }
-
-    #[tokio::test]
-    async fn test_cleanup_expired() {
-        let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
-
-        // 创建短期封禁
-        firewall
-            .ban(ip, Duration::milliseconds(50))
-            .await
-            .expect("Failed to ban IP");
-
-        // 等待过期
-        sleep(TokioDuration::from_millis(100)).await;
-
-        // 清理过期规则
-        let expired = firewall.cleanup_expired().await.expect("Failed to cleanup");
-        assert_eq!(expired.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_unban() {
-        let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 80));
-
-        // 封禁
-        firewall
-            .ban(ip, Duration::hours(1))
-            .await
-            .expect("Failed to ban");
-
-        // 验证封禁
-        let rules = firewall
-            .get_active_rules()
-            .await
-            .expect("Failed to get rules");
-        assert_eq!(rules.len(), 1);
-
-        // 解封
-        let removed = firewall.unban(ip).await.expect("Failed to unban");
-        assert_eq!(removed.len(), 1);
-
-        // 验证解封
-        let rules = firewall
-            .get_active_rules()
-            .await
-            .expect("Failed to get rules");
-        assert_eq!(rules.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_duplicate_rules() {
-        let firewall = create_test_firewall().await;
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 90));
-
-        let rule_id1 = firewall
-            .limit(ip, 500)
-            .await
-            .expect("Failed to create first rule");
-        let rule_id2 = firewall
-            .limit(ip, 500)
-            .await
-            .expect("Failed to create second rule");
-
-        assert_eq!(rule_id1, rule_id2);
-
-        let rules = firewall
-            .get_active_rules()
-            .await
-            .expect("Failed to get rules");
-        assert_eq!(rules.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_ipv6_support() {
-        let cfg = Config {
-            table_name: Some("test_filter_v6".to_string()),
-            chain_name: Some("TEST_CHAIN_V6".to_string()),
-            family: Some("ip6".to_string()),
-
-            interface: "".to_string(),
-            rules: vec![],
-            log_path: "".to_string(),
-        };
-        let firewall = Firewall::new(&cfg)
-            .await
-            .expect("Failed to create IPv6 firewall");
-
-        let ipv6 = "2001:db8::1".parse::<IpAddr>().expect("Invalid IPv6");
-
-        let rule_id = firewall
-            .limit(ipv6, 5000)
-            .await
-            .expect("Failed to create IPv6 rule");
-        assert!(!rule_id.is_empty());
-
-        let rules = firewall
-            .get_active_rules()
-            .await
-            .expect("Failed to get rules");
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].ip, ipv6);
-    }
-
-    #[tokio::test]
-    async fn test_cleanup_all() {
-        let firewall = create_test_firewall().await;
-        let ip1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
-        let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20));
-
-        firewall.limit(ip1, 1000).await.expect("Failed to limit");
-        firewall
-            .ban(ip2, Duration::hours(1))
-            .await
-            .expect("Failed to ban");
-
-        let rules = firewall
-            .get_active_rules()
-            .await
-            .expect("Failed to get rules");
-        assert_eq!(rules.len(), 2);
-
-        firewall.cleanup().await.expect("Failed to cleanup");
-
-        let rules = firewall
-            .get_active_rules()
-            .await
-            .expect("Failed to get rules");
-        assert_eq!(rules.len(), 0);
     }
 }

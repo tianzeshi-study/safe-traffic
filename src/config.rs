@@ -7,7 +7,7 @@ use std::{fs, path::Path, collections::HashSet, net::IpAddr};
 #[derive(Deserialize, Debug, Clone)]
 pub enum Action {
     /// 限速模式，参数：kbit/s
-    RateLimit { kbps: u64 },
+    RateLimit { kbps: u64, burst: u64 },
     /// 封禁模式，参数：秒
     Ban { seconds: u64 },
 }

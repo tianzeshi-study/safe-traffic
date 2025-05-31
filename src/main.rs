@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 #[command(author, version, about = "Safe Server Traffic 自动限流与封禁工具")]
 struct Args {
     /// 配置文件路径
-    #[arg(short, long, default_value = "/etc/safe-server-traffic/conf.toml")]
+    #[arg(short, long, default_value = "/etc/safe-server-traffic/default.toml")]
     config: String,
 }
 
