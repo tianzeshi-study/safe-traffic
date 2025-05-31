@@ -208,7 +208,7 @@ impl Firewall {
             let rules = self.rules.read().await;
             for (_, rule) in rules.iter() {
                 if rule.ip == ip {
-                // if let Some(rule) = rules.get(&rule_id) {
+                    // if let Some(rule) = rules.get(&rule_id) {
                     if let Action::Ban { seconds: _sec } = rule.rule_type {
                         let existing_until = rule.created_at + duration;
                         if existing_until > Utc::now() {

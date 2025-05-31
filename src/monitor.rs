@@ -1,18 +1,21 @@
-use crate::{config::Config, controller::Firewall, rules::{RuleEngine, TrafficStats}};
+use crate::{
+    config::Config,
+    controller::Firewall,
+    rules::{RuleEngine, TrafficStats},
+};
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
 use rtnetlink::{new_connection, Handle};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    process::Command,
     sync::Arc,
     time::{Duration, Instant},
-    path::Path,
-process::Command,
 };
-use tokio::{sync::RwLock, task, time};
+use tokio::{sync::RwLock, time};
 
 /// 接口统计信息
 #[derive(Debug, Clone)]
@@ -57,18 +60,15 @@ impl TrafficMonitor {
 
             // if let Err(e) = self.update_traffic_stats().await {
             if let Err(e) = self.update_traffic_stats_per_ip().await {
-
                 error!("更新流量统计失败: {:?}", e);
                 continue;
             }
 
             // 清理过期的流量统计
-            let expired_rules =  self.cleanup_expired_stats().await;
+            let expired_rules = self.cleanup_expired_stats().await;
             dbg!(&expired_rules);
         }
     }
-
-
 
     /// 获取活跃的网络连接IP地址
     async fn get_active_connections(&self) -> anyhow::Result<Vec<IpAddr>> {
@@ -242,58 +242,7 @@ impl TrafficMonitor {
         self.stats
             .retain(|_ip, stats| now.duration_since(stats.last_updated) < expire_duration);
     }
-
-    /// 获取接口统计信息
-    async fn get_interface_stats(&self) -> anyhow::Result<InterfaceStats> {
-        let mut links = self
-            .handle
-            .link()
-            .get()
-            .match_name(self.interface.clone())
-            .execute();
-
-        while let Some(msg) = links.try_next().await? {
-            if self.is_interface_up(&msg) {
-                return self.extract_interface_stats(&msg);
-            }
-        }
-
-        anyhow::bail!("接口 {} 未找到或未启用", self.interface)
-    }
-
-    /// 检查接口是否处于 UP 状态
-    fn is_interface_up(&self, msg: &LinkMessage) -> bool {
-        msg.header.flags.contains(LinkFlags::Up)
-    }
-
-    /// 从链路消息中提取统计信息
-    fn extract_interface_stats(&self, msg: &LinkMessage) -> anyhow::Result<InterfaceStats> {
-        for attr in &msg.attributes {
-            match attr {
-                LinkAttribute::Stats64(stats) => {
-                    return Ok(InterfaceStats {
-                        rx_bytes: stats.rx_bytes,
-                        tx_bytes: stats.tx_bytes,
-                        rx_packets: stats.rx_packets,
-                        tx_packets: stats.tx_packets,
-                    });
-                }
-                LinkAttribute::Stats(stats) => {
-                    return Ok(InterfaceStats {
-                        rx_bytes: stats.rx_bytes as u64,
-                        tx_bytes: stats.tx_bytes as u64,
-                        rx_packets: stats.rx_packets as u64,
-                        tx_packets: stats.tx_packets as u64,
-                    });
-                }
-                _ => continue,
-            }
-        }
-        anyhow::bail!("无法获取接口 {} 的统计信息", self.interface)
-    }
 }
-
-
 
 /// 连接信息结构体
 #[derive(Debug, Clone)]
@@ -305,9 +254,8 @@ pub struct ConnectionInfo {
     pub last_activity: Instant,
     pub historical_rx: u64,
     pub historical_tx: u64,
-    pub weight: f64,      // 权重，用于分配流量
+    pub weight: f64, // 权重，用于分配流量
 }
-
 
 /// 运行主监控逻辑
 pub async fn run(cfg: Config, fw: &Arc<RwLock<Firewall>>) -> anyhow::Result<()> {
@@ -367,7 +315,7 @@ async fn start_rule_engine(
         // error!("Checking engine rules fail   : {:?}", e);
         // }
         match engine.check_and_apply(&mut fw_guard).await {
-            Ok(v) => {}
+            Ok(_v) => {}
             Err(e) => error!("check and apply fail {}", e),
         }
         drop(fw_guard);
@@ -405,84 +353,84 @@ impl TrafficMonitor {
     async fn update_traffic_stats_per_ip(&self) -> anyhow::Result<()> {
         // 方法1: 通过iptables规则获取每个IP的流量
         let ip_stats = self.get_traffic_via_iptables().await?;
-            self.update_stats_from_ip_data(ip_stats).await?;
-            Ok(())
-
+        self.update_stats_from_ip_data(ip_stats).await?;
+        Ok(())
     }
 
     /// 方法1: 通过iptables规则获取每个IP的流量统计
     async fn get_traffic_via_iptables(&self) -> anyhow::Result<HashMap<IpAddr, IpTrafficStats>> {
         let mut ip_stats = HashMap::new();
-        
+
         // 首先确保有iptables规则来统计流量
         self.ensure_iptables_rules().await?;
-        
+
         // 获取iptables统计信息
         let output = Command::new("iptables")
             .args(["-L", "INPUT", "-v", "-n", "-x"])
             .output()?;
-        
+
         if !output.status.success() {
             anyhow::bail!("执行iptables命令失败");
         }
-        
+
         let stdout = String::from_utf8(output.stdout)?;
         self.parse_iptables_output(&stdout, &mut ip_stats)?;
-        
+
         // 同样处理OUTPUT链
         let output = Command::new("iptables")
             .args(["-L", "OUTPUT", "-v", "-n", "-x"])
             .output()?;
-        
+
         if output.status.success() {
             let stdout = String::from_utf8(output.stdout)?;
             self.parse_iptables_output(&stdout, &mut ip_stats)?;
         }
-        
+
         Ok(ip_stats)
     }
-    
+
     /// 确保iptables规则存在以统计每个IP的流量
     async fn ensure_iptables_rules(&self) -> anyhow::Result<()> {
         // 获取当前活跃的IP地址
         let active_ips = self.get_active_ips().await?;
-        
+
         for ip in active_ips {
             // 为每个IP创建INPUT和OUTPUT规则
             let ip_str = ip.to_string();
-            
+
             // INPUT规则 (接收流量)
             let _result = Command::new("iptables")
                 .args(["-I", "INPUT", "-s", &ip_str, "-j", "ACCEPT"])
                 .output();
-            
+
             // OUTPUT规则 (发送流量)
             let _result = Command::new("iptables")
                 .args(["-I", "OUTPUT", "-d", &ip_str, "-j", "ACCEPT"])
                 .output();
         }
-        
+
         Ok(())
     }
-    
+
     /// 解析iptables输出获取流量统计
     fn parse_iptables_output(
-        &self, 
-        output: &str, 
-        ip_stats: &mut HashMap<IpAddr, IpTrafficStats>
+        &self,
+        output: &str,
+        ip_stats: &mut HashMap<IpAddr, IpTrafficStats>,
     ) -> anyhow::Result<()> {
-        for line in output.lines().skip(2) { // 跳过标题行
+        for line in output.lines().skip(2) {
+            // 跳过标题行
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() < 9 {
                 continue;
             }
-            
+
             // 格式: pkts bytes target prot opt in out source destination
             let packets: u64 = fields[0].parse().unwrap_or(0);
             let bytes: u64 = fields[1].parse().unwrap_or(0);
             let source = fields[7];
             let destination = fields[8];
-            
+
             // 解析源IP和目标IP
             if let Ok(src_ip) = source.parse::<IpAddr>() {
                 let entry = ip_stats.entry(src_ip).or_insert_with(|| IpTrafficStats {
@@ -497,7 +445,7 @@ impl TrafficMonitor {
                 entry.tx_bytes += bytes;
                 entry.tx_packets += packets;
             }
-            
+
             if let Ok(dst_ip) = destination.parse::<IpAddr>() {
                 let entry = ip_stats.entry(dst_ip).or_insert_with(|| IpTrafficStats {
                     ip: dst_ip,
@@ -512,68 +460,68 @@ impl TrafficMonitor {
                 entry.rx_packets += packets;
             }
         }
-        
+
         Ok(())
     }
 
-   /// 更新统计数据
+    /// 更新统计数据
     async fn update_stats_from_ip_data(
-        &self, 
-        ip_stats: HashMap<IpAddr, IpTrafficStats>
+        &self,
+        ip_stats: HashMap<IpAddr, IpTrafficStats>,
     ) -> anyhow::Result<()> {
         for (ip, new_stats) in ip_stats {
             let mut stats = self.stats.entry(ip).or_insert_with(TrafficStats::default);
-            
+
             // 计算增量
             let rx_delta = new_stats.rx_bytes.saturating_sub(stats.rx_bytes);
             let tx_delta = new_stats.tx_bytes.saturating_sub(stats.tx_bytes);
-            
+
             // 更新统计
             stats.rx_bytes = new_stats.rx_bytes;
             stats.tx_bytes = new_stats.tx_bytes;
             stats.last_updated = Instant::now();
-            
+
             if rx_delta > 0 || tx_delta > 0 {
                 debug!(
-                    "IP {} 流量更新: RX +{} bytes, TX +{} bytes", 
+                    "IP {} 流量更新: RX +{} bytes, TX +{} bytes",
                     ip, rx_delta, tx_delta
                 );
             }
         }
-        
+
         Ok(())
     }
 
     /// 辅助方法：获取所有活跃IP
     async fn get_active_ips(&self) -> anyhow::Result<Vec<IpAddr>> {
         let mut ips = Vec::new();
-        
+
         // 从现有统计中获取
         for entry in self.stats.iter() {
             ips.push(*entry.key());
         }
-        
+
         // 从当前连接中获取
         if let Ok(connections) = self.get_active_connections().await {
             ips.extend(connections);
         }
-        
+
         // 去重
         ips.sort();
         ips.dedup();
-        
+
         Ok(ips)
     }
-    
+
     /// 辅助方法：解析socket地址
     fn parse_socket_address(&self, addr: &str) -> anyhow::Result<(IpAddr, u16)> {
         if let Some(colon_pos) = addr.rfind(':') {
             let ip_str = &addr[..colon_pos];
             let port_str = &addr[colon_pos + 1..];
-            
+
             let ip: IpAddr = ip_str.parse()?;
             let port: u16 = port_str.parse()?;
-            
+
             Ok((ip, port))
         } else {
             anyhow::bail!("无效的socket地址格式: {}", addr);
@@ -585,13 +533,6 @@ impl TrafficMonitor {
         // 实现留给具体的系统调用或工具
         // 可以使用netstat -p 或 lsof -i
         Ok(Vec::new())
-    }
-
-    /// 获取进程的网络统计
-    async fn get_process_network_stats(&self, pid: u32) -> anyhow::Result<(u64, u64)> {
-        // 读取 /proc/{pid}/net/dev 或类似文件
-        // 这个方法的实现取决于具体的系统和权限
-        Ok((0, 0))
     }
 }
 
@@ -605,5 +546,3 @@ struct ConnectionWithPid {
     pub protocol: String,
     pub state: String,
 }
-
-

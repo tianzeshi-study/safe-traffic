@@ -5,7 +5,7 @@ use log::{debug, info};
 use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{timeout, Duration as TokioDuration};
