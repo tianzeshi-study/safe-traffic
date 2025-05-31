@@ -6,7 +6,7 @@ use crate::{
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
 use log::{debug, error, info};
-use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
+// use netlink_packet_route::link::{LinkAttribute, LinkFlags, LinkMessage};
 use rtnetlink::{new_connection, Handle};
 use std::{
     collections::HashMap,
@@ -245,17 +245,7 @@ impl TrafficMonitor {
 }
 
 /// 连接信息结构体
-#[derive(Debug, Clone)]
-pub struct ConnectionInfo {
-    pub ip: IpAddr,
-    pub port: u16,
-    pub protocol: String, // "tcp" 或 "udp"
-    pub state: String,    // 连接状态
-    pub last_activity: Instant,
-    pub historical_rx: u64,
-    pub historical_tx: u64,
-    pub weight: f64, // 权重，用于分配流量
-}
+
 
 /// 运行主监控逻辑
 pub async fn run(cfg: Config, fw: &Arc<RwLock<Firewall>>) -> anyhow::Result<()> {
@@ -513,36 +503,7 @@ impl TrafficMonitor {
         Ok(ips)
     }
 
-    /// 辅助方法：解析socket地址
-    fn parse_socket_address(&self, addr: &str) -> anyhow::Result<(IpAddr, u16)> {
-        if let Some(colon_pos) = addr.rfind(':') {
-            let ip_str = &addr[..colon_pos];
-            let port_str = &addr[colon_pos + 1..];
-
-            let ip: IpAddr = ip_str.parse()?;
-            let port: u16 = port_str.parse()?;
-
-            Ok((ip, port))
-        } else {
-            anyhow::bail!("无效的socket地址格式: {}", addr);
-        }
-    }
-
-    /// 获取带PID的连接信息 (需要root权限)
-    async fn get_all_connections_with_pids(&self) -> anyhow::Result<Vec<ConnectionWithPid>> {
-        // 实现留给具体的系统调用或工具
-        // 可以使用netstat -p 或 lsof -i
-        Ok(Vec::new())
-    }
 }
 
-/// 带PID的连接信息
-#[derive(Debug)]
-struct ConnectionWithPid {
-    pub pid: u32,
-    pub local_port: u16,
-    pub remote_ip: IpAddr,
-    pub remote_port: u16,
-    pub protocol: String,
-    pub state: String,
-}
+
+
