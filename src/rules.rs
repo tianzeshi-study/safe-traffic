@@ -1,8 +1,8 @@
 use crate::{config::Rule, controller::Firewall};
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use log::{info, debug};
+use log::{debug, info};
 use std::{net::IpAddr, sync::Arc, time::Instant};
 
 /// 流量统计结构体
@@ -22,8 +22,6 @@ impl Default for TrafficStats {
         }
     }
 }
-
-
 
 /// 单 IP 的滑动窗口记录
 struct Window {
@@ -58,8 +56,7 @@ impl RuleEngine {
         // 遍历每个 IP 的最新流量
         for entry in self.stats.iter() {
             let ip = *entry.key();
-            
-                        
+
             // let bps = entry.value().tx_bytes;
             let bps = entry.value().rx_bytes;
             // 获取或创建滑动窗口
@@ -78,9 +75,9 @@ impl RuleEngine {
             // 对每条规则进行检测
             for rule in &self.rules {
                 if rule.is_excluded(&ip) {
-                debug!("skipping excluded  IP: {}", ip);
-                continue;
-            }
+                    debug!("skipping excluded  IP: {}", ip);
+                    continue;
+                }
 
                 let window_size = rule.window_secs as usize;
                 // 计算滑动窗口内总流量
@@ -101,7 +98,7 @@ impl RuleEngine {
                         }
                         crate::config::Action::Ban { seconds } => {
                             info!("Ban  {} for {} seconds", ip, seconds);
-                            // let duration = Duration::seconds(seconds as i64);
+
                             fw.ban(ip, seconds).await?;
                             // fw.ban(ip, duration).await?;
                             // fw.ban(ip).await?;
@@ -113,4 +110,3 @@ impl RuleEngine {
         Ok(())
     }
 }
-

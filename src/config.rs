@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::{fs, path::Path, collections::HashSet, net::IpAddr};
+use std::{collections::HashSet, fs, net::IpAddr, path::Path};
 
 /// 单条规则动作类型：限速或封禁
 #[derive(Deserialize, Debug, Clone)]
@@ -22,12 +22,11 @@ pub struct Rule {
     excluded_ips: Option<HashSet<IpAddr>>,
 }
 
-
 impl Rule {
     pub fn is_excluded(&self, ip: &IpAddr) -> bool {
         if let Some(excluded_ips) = &self.excluded_ips {
-excluded_ips.contains(ip)
-        } else { 
+            excluded_ips.contains(ip)
+        } else {
             false
         }
     }

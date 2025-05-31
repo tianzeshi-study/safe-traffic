@@ -1,17 +1,14 @@
 use crate::error::FirewallError;
-use chrono::{DateTime, Duration, Utc};
-use log::{debug, error, info, warn};
 use anyhow::{Context, Result};
+use chrono::{DateTime, Duration, Utc};
+use log::{debug, info};
 use std::collections::VecDeque;
-use std::net::IpAddr;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{timeout, Duration as TokioDuration};
-
-
 
 /// NFT 命令执行器
 #[derive(Debug)]
@@ -286,4 +283,3 @@ impl NftExecutor {
         Ok(results)
     }
 }
-

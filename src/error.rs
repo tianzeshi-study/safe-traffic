@@ -17,4 +17,3 @@ pub enum FirewallError {
     #[error("Command timeout")]
     CommandTimeout,
 }
-

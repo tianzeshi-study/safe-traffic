@@ -1,19 +1,17 @@
-use crate::{config::{Config, Action}, nft::NftExecutor};
-use anyhow::{Context, Result};
+use crate::{
+    config::{Action, Config},
+    nft::NftExecutor,
+};
+use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
-use log::{debug, error, info, warn};
-use regex::Regex;
+use log::{debug, info, warn};
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, RwLock, Semaphore};
-use tokio::time::{timeout, Duration as TokioDuration};
 
-
+use tokio::process::Command;
+use tokio::sync::RwLock;
 
 /// 防火墙规则信息
 #[derive(Debug, Clone)]
@@ -22,7 +20,7 @@ pub struct FirewallRule {
     pub ip: IpAddr,
     pub rule_type: Action,
     pub created_at: DateTime<Utc>,
-    pub handle: Option<String>,
+    handle: Option<String>,
 }
 
 /// 纯 Rust 防火墙控制器（使用池化的 nft 执行器）
@@ -200,7 +198,7 @@ impl Firewall {
 
     /// 对指定 IP 封禁指定时长
     pub async fn ban(&self, ip: IpAddr, seconds: u64) -> Result<String> {
-    // pub async fn ban(&self, ip: IpAddr) -> Result<String> {
+        // pub async fn ban(&self, ip: IpAddr) -> Result<String> {
         let duration = Duration::seconds(seconds as i64);
         let until = Utc::now() + duration;
         let rule_id = format!("ban_{}_{}", ip, until.timestamp());
@@ -210,12 +208,9 @@ impl Firewall {
             let rules = self.rules.read().await;
             for (_, rule) in rules.iter() {
                 if rule.ip == ip {
-                    if let Action::Ban {
-                        seconds: sec,
-                    } = rule.rule_type
-                    {
-                        
-                        let  existing_until = rule.created_at +duration;
+                // if let Some(rule) = rules.get(&rule_id) {
+                    if let Action::Ban { seconds: _sec } = rule.rule_type {
+                        let existing_until = rule.created_at + duration;
                         if existing_until > Utc::now() {
                             warn!(
                                 "IP {} has already been banned until {}, skipping",
@@ -315,7 +310,7 @@ impl Firewall {
                 if let Action::Ban { seconds } = rule.rule_type {
                     let duration = Duration::seconds(seconds as i64);
                     let until = rule.created_at + duration;
-                    if until <= now  {
+                    if until <= now {
                         rules_to_remove.push((rule_id.clone(), rule.handle.clone()));
                     }
                 }
@@ -398,7 +393,7 @@ impl Firewall {
             .filter(|rule| {
                 if let Action::Ban { seconds } = rule.rule_type {
                     let duration = Duration::seconds(seconds as i64);
-        let until = Utc::now() + duration;
+                    let until = Utc::now() + duration;
                     until <= Utc::now()
                 } else {
                     false
