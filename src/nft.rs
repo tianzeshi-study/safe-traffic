@@ -79,7 +79,7 @@ impl NftProcess {
             TokioDuration::from_secs(10),
             self.do_execute_internal("list tables")
         ).await;
-        dbg!(&test_result);
+
 
         match test_result {
             Ok(Ok(_)) => {
@@ -113,7 +113,7 @@ impl NftProcess {
 
         // 设置命令执行超时
         let result = timeout(
-            TokioDuration::from_secs(30000000),
+            TokioDuration::from_secs(10),
             self.do_execute_internal(command)
         ).await;
 
@@ -146,14 +146,14 @@ impl NftProcess {
         // let stderr_reader = self.stderr_reader.as_mut()
             // .ok_or_else(|| NftError::ProcessNotAvailable("stderr not available".to_string()))?;
 let full_command = format!("{}\n", command); 
-dbg!(&full_command);
+
         // 发送命令
         let b = self.stdin.as_mut()
             .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
         .write(full_command.as_bytes())
         .await
             .context("Failed to write command to nft process")?;
-            dbg!(&b);
+
             
         self.stdin.as_mut()
             .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
@@ -168,7 +168,7 @@ let r= self.stdout_reader.as_mut()
 .read_line(&mut out_content )
 .await
 .context("Failed to read line")?;
-                dbg!(&r, &out_content);
+
 
 
         Ok(out_content)
@@ -327,7 +327,7 @@ impl NftExecutor {
 
         // 将进程返回池中或销毁
         self.return_or_destroy_process(process).await;
-        dbg!(&result);
+
 
         result
     }
