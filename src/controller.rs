@@ -36,28 +36,14 @@ pub struct Firewall {
 
 impl Firewall {
     /// 初始化防火墙控制器
-    pub async fn new(cfg: &Config) -> Result<Self> {
+    pub async fn new(cfg: &Config, executor:Arc<NftExecutor>) -> Result<Self> {
         let table_name = cfg.table_name.clone().unwrap_or("filter".to_string());
         let chain_name = cfg.chain_name.clone().unwrap_or("SAFE_TRAFFIC".to_string());
         let family = cfg.family.clone().unwrap_or("ip".to_string());
 
         // 检查 nftables 是否可用
-        let nft_available = Self::check_nftables_available().await?;
-
-        // 创建执行器池
-        let max_pool_size = cfg.executor_pool_size.unwrap_or(5);
-        let max_process_age = cfg.executor_max_age_secs.unwrap_or(300);
-        let max_commands_per_process = cfg.executor_max_commands.unwrap_or(100);
-
-        let executor = Arc::new(
-            NftExecutor::new(
-                max_pool_size,
-                max_process_age,
-                max_commands_per_process,
-                !nft_available,
-            )
-            .await,
-        );
+        let nft_available = crate::nft::check_nftables_available().await?;
+        
 
         let firewall = Firewall {
             table_name,
@@ -71,10 +57,7 @@ impl Firewall {
         if nft_available {
             // 初始化表和链
             firewall.init_table_and_chain().await?;
-            info!(
-                "Firewall controller initialized: table={}, chain={}, executor_pool_size={}",
-                firewall.table_name, firewall.chain_name, max_pool_size
-            );
+            
         } else {
             warn!("nftables is unavailable, using mock mode instead");
         }
@@ -83,34 +66,6 @@ impl Firewall {
     }
 
     /// 检查 nftables 是否可用
-    async fn check_nftables_available() -> Result<bool> {
-        match Command::new("nft")
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-        {
-            Ok(status) => {
-                if status.success() {
-                    // 检查是否有权限
-                    match Command::new("nft")
-                        .args(&["list", "tables"])
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .status()
-                        .await
-                    {
-                        Ok(status) => Ok(status.success()),
-                        Err(_) => Ok(false),
-                    }
-                } else {
-                    Ok(false)
-                }
-            }
-            Err(_) => Ok(false),
-        }
-    }
 
     /// 初始化 nftables 表和链
     async fn init_table_and_chain(&self) -> Result<()> {
