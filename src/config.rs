@@ -58,7 +58,7 @@ impl Config {
         let text = fs::read_to_string(path)?;
         // 解析为 Config 结构
         let cfg: Config = toml::from_str(&text)?;
-        dbg!(&cfg);
+
         Ok(cfg)
     }
 }

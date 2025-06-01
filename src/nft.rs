@@ -39,33 +39,16 @@ impl NftProcess {
     /// 创建新的 nft 进程
     async fn new() -> Result<Self> {
         let mut child = Command::new("nft")
-            .args(["-a", "-i", "-j"]) // 交互模式
+            .args(["-a", "-e", "-i", "-j"]) // 交互模式
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // .kill_on_drop(true)
+            .kill_on_drop(true)
             .spawn()
             .context("Failed to spawn nft process")?;
 
 
         
-        dbg!(&child);
-        let mut out_content1: Vec<u8>  = Vec::new();
-        let mut out_content2  = String::new();
-        let mut err_content1  = Vec::new();
-        
-                        let r = child.stdin.as_mut().unwrap().write(b"list tables ;\n").await.unwrap();
-                        dbg!(&r);
-                        let out   = child.stdout.as_mut()
-                        .map(BufReader::new)
-                        .unwrap()
-                        .read_line(&mut out_content2).await.unwrap();
-                        // let out   = child.stdout.as_mut().unwrap();
-                        // out_content1.read(&mut  out);
-                        dbg!(&out, &out_content2);
-                        let e  = child.stderr.as_mut().unwrap().read(&mut err_content1).await.unwrap();
-                        dbg!(&e);
-                        dbg!(&r, &out, &out_content1, &err_content1);
 
                         let mut stdin = child.stdin.take();
         let stdout = child.stdout.take().map(BufReader::new);
@@ -96,6 +79,7 @@ impl NftProcess {
             TokioDuration::from_secs(10),
             self.do_execute_internal("list tables")
         ).await;
+        dbg!(&test_result);
 
         match test_result {
             Ok(Ok(_)) => {
@@ -129,7 +113,7 @@ impl NftProcess {
 
         // 设置命令执行超时
         let result = timeout(
-            TokioDuration::from_secs(30),
+            TokioDuration::from_secs(30000000),
             self.do_execute_internal(command)
         ).await;
 
@@ -137,7 +121,7 @@ impl NftProcess {
 
         match result {
             Ok(Ok(output)) => {
-                debug!("Successfully executed nft command: {}", command);
+                debug!("Successfully executed nft command: {}, \n get output: {}", command, output);
                 Ok(output)
             }
             Ok(Err(e)) => {
@@ -154,115 +138,40 @@ impl NftProcess {
     /// 内部执行命令的实现
     async fn do_execute_internal(&mut self, command: &str) -> Result<String> {
 
-        let stdin = self.stdin.as_mut()
-            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?;
+        // let stdin = self.stdin.as_mut()
+            // .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?;
+        // let stdout_reader = self.stdout_reader.as_mut()
+            // .ok_or_else(|| NftError::ProcessNotAvailable("stdout not available".to_string()))?;
 
-
-        let stdout_reader = self.stdout_reader.as_mut()
-            .ok_or_else(|| NftError::ProcessNotAvailable("stdout not available".to_string()))?;
-
-        let stderr_reader = self.stderr_reader.as_mut()
-            .ok_or_else(|| NftError::ProcessNotAvailable("stderr not available".to_string()))?;
-
-        // 添加命令结束标记，用于识别命令执行完成
-        let command_id = format!("CMD_{}", self.command_count);
-        // let full_command = format!("{}\necho \"END_OF_COMMAND_{}\"\n", command, command_id);
-        let full_command = format!("{}", command);
-
+        // let stderr_reader = self.stderr_reader.as_mut()
+            // .ok_or_else(|| NftError::ProcessNotAvailable("stderr not available".to_string()))?;
+let full_command = format!("{}\n", command); 
+dbg!(&full_command);
         // 发送命令
-        // stdin.write_all(full_command.as_bytes()).await
-            // .context("Failed to write command to nft process")?;
-        // stdin.flush().await
-            // .context("Failed to flush stdin")?;
+        let b = self.stdin.as_mut()
+            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
+        .write(full_command.as_bytes())
+        .await
+            .context("Failed to write command to nft process")?;
+            dbg!(&b);
+            
+        self.stdin.as_mut()
+            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
+            .flush()
+        .await
+            .context("Failed to flush stdin")?;
 
-        // 读取输出和错误
-        let mut stdout_lines = Vec::new();
-        let mut stderr_lines = Vec::new();
-        let mut command_completed = false;
-        let end_marker = format!("END_OF_COMMAND_{}", command_id);
 
-        // 使用 select! 同时读取 stdout 和 stderr
-                let mut out_content  = &mut String::new();
-                let mut err_content  = &mut String::new();
-               
-                let r = stdin
-                .write(b"list tables ;\n").await.unwrap();
-                dbg!(&self.child);
-                dbg!(&r);
-                let mut out_content1  = Vec::new();
-                let mut err_content1  = Vec::new();
-                let stdout_result1 = stdout_reader.read(&mut out_content1);
-                let stderr_result1 = stderr_reader.read(&mut err_content1);
-                dbg!(&out_content1, &err_content1);
-        loop {
-            tokio::select! {
-                // 读取标准输出
-                stdout_result = stdout_reader.read_line(&mut out_content ) => {
-                    match stdout_result {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            let mut line = String::new();
-                            if stdout_reader.read_line(&mut line).await? > 0 {
-                                let line = line.trim();
-                                if line == end_marker {
-                                    command_completed = true;
-                                    break;
-                                } else if !line.is_empty() {
-                                    stdout_lines.push(line.to_string());
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            return Err(NftError::CommunicationError(
-                                format!("Failed to read stdout: {}", e)
-                            ).into());
-                        }
-                    }
-                }
-                
-                // 读取标准错误
-                stderr_result = stderr_reader.read_line(&mut err_content) => {
-                    match stderr_result {
-                        Ok(0) => {}, // EOF on stderr is normal
-                        Ok(_) => {
-                            let mut line = String::new();
-                            if stderr_reader.read_line(&mut line).await? > 0 {
-                                let line = line.trim();
-                                if !line.is_empty() {
-                                    stderr_lines.push(line.to_string());
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Error reading stderr: {}", e);
-                        }
-                    }
-                }
-            }
+                let mut out_content  = String::new();
+let r= self.stdout_reader.as_mut()
+            .ok_or_else(|| NftError::ProcessNotAvailable("stdout not available".to_string()))?
+.read_line(&mut out_content )
+.await
+.context("Failed to read line")?;
+                dbg!(&r, &out_content);
 
-            // 防止无限循环
-            if stdout_lines.len() + stderr_lines.len() > 1000 {
-                return Err(NftError::CommunicationError(
-                    "Too many output lines, possible infinite loop".to_string()
-                ).into());
-            }
-        }
 
-        if !command_completed {
-            return Err(NftError::CommunicationError(
-                "Command completion marker not found".to_string()
-            ).into());
-        }
-
-        // 检查是否有错误输出
-        if !stderr_lines.is_empty() {
-            let error_msg = stderr_lines.join("\n");
-            return Err(NftError::CommandFailed(error_msg).into());
-        }
-
-        // 返回标准输出
-        let output = stdout_lines.join("\n");
-        Ok(output)
+        Ok(out_content)
     }
 
     /// 执行批量命令
@@ -418,6 +327,7 @@ impl NftExecutor {
 
         // 将进程返回池中或销毁
         self.return_or_destroy_process(process).await;
+        dbg!(&result);
 
         result
     }

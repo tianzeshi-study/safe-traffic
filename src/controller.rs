@@ -70,15 +70,17 @@ impl Firewall {
     /// 初始化 nftables 表和链
     async fn init_table_and_chain(&self) -> Result<()> {
         let commands = vec![
-            format!("add table {} {}", self.family, self.table_name),
+            format!("create table {} {}", self.family, self.table_name),
             format!(
-                "add chain {} {} {} {{ type filter hook input priority 0 \\; policy accept \\; }}",
+                "create chain {} {} {} {{ type filter hook input priority 0 ; policy accept ; }}",
                 self.family, self.table_name, self.chain_name
             ),
         ];
 
         // 使用批量执行，更高效
-        let _results = self.executor.execute_batch(commands).await?;
+        let _result1 = self.executor.execute(&commands[0]).await?;
+        let _result2 = self.executor.execute(&commands[1]).await?;
+        // let _results = self.executor.execute_batch(commands).await?;
 
         debug!(
             "Table {} and chain {} initialized",
