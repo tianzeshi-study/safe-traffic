@@ -121,7 +121,7 @@ impl NftProcess {
 
         match result {
             Ok(Ok(output)) => {
-                debug!("Successfully executed nft command: {}, \n get output: {}", command, output);
+                debug!("Successfully executed nft command: {}", command);
                 Ok(output)
             }
             Ok(Err(e)) => {
@@ -173,6 +173,29 @@ let r= self.stdout_reader.as_mut()
 
         Ok(out_content)
     }
+    
+    pub async fn do_input(&mut self, command: &str) -> Result<()> {
+
+let full_command = format!("{}\n", command); 
+
+        // 发送命令
+        let b = self.stdin.as_mut()
+            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
+        .write(full_command.as_bytes())
+        .await
+            .context("Failed to write command to nft process")?;
+
+            
+        self.stdin.as_mut()
+            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
+            .flush()
+        .await
+            .context("Failed to flush stdin")?;
+
+
+        Ok(())
+    }
+    
 
     /// 执行批量命令
     async fn execute_batch(&mut self, commands: &[&str]) -> Result<Vec<String>> {
@@ -236,10 +259,18 @@ let r= self.stdout_reader.as_mut()
         debug!("Shutting down NFT process (commands executed: {})", self.command_count);
         
         // 尝试发送退出命令
-        if let Some(mut stdin) = self.stdin.take() {
-            let _ = stdin.write_all(b"quit\n").await;
-            let _ = stdin.flush().await;
-        }
+        self.stdin.as_mut()
+            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
+        .write(b"quit\n")
+        .await
+        .context("fail to write quit")?;
+        
+        self.stdin.as_mut()
+            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
+            .flush()
+        .await
+            .context("Failed to flush stdin")?;
+
 
         // 等待进程结束，设置超时
         let wait_result = timeout(
@@ -254,9 +285,10 @@ let r= self.stdout_reader.as_mut()
             Ok(Err(e)) => {
                 warn!("Error waiting for NFT process: {}", e);
             }
-            Err(_) => {
-                warn!("NFT process shutdown timeout, forcing kill");
-                let _ = self.child.kill().await;
+            Err(e) => {
+                warn!("NFT process shutdown timeout, forcing kill, detail: {}", e);
+                let kill_result  = self.child.kill().await;
+
             }
         }
 
@@ -324,6 +356,32 @@ impl NftExecutor {
 
         // 执行命令
         let result = process.execute_command(command).await;
+
+        // 将进程返回池中或销毁
+        self.return_or_destroy_process(process).await;
+
+
+        result
+    }
+    /// execute command without output  
+    pub async fn input(&self, command: &str) -> Result<()> {
+        if self.mock_mode {
+            debug!("Mocking nft command execution: {}", command);
+            return Ok(());
+        }
+
+        // 获取信号量许可
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| FirewallError::ExecutorPoolExhausted)?;
+
+        // 尝试从池中获取可用进程
+        let mut process = self.get_or_create_process().await?;
+
+        // 执行命令
+        let result = process.do_input(command).await;
 
         // 将进程返回池中或销毁
         self.return_or_destroy_process(process).await;

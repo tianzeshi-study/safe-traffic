@@ -281,14 +281,14 @@ impl TrafficMonitor {
     /// 设置 nftables 表和链结构
     async fn setup_nft_table_structure(&self) -> anyhow::Result<()> {
         // 使用 executor 而不是直接调用 Command
-        let _ = self.executor.execute("add table inet traffic_monitor").await;
+        self.executor.input("add table inet traffic_monitor").await;
         
-        let _ = self.executor.execute(
-            "add chain inet traffic_monitor input_stats { type filter hook input priority 100; policy accept; }"
+        self.executor.input(
+            "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }"
         ).await;
         
-        let _ = self.executor.execute(
-            "add chain inet traffic_monitor output_stats { type filter hook output priority 100; policy accept; }"
+        self.executor.input(
+            "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }"
         ).await;
 
         Ok(())
@@ -296,18 +296,19 @@ impl TrafficMonitor {
 
     /// 为特定IP确保计数器规则存在
     async fn ensure_ip_counter_rules(&self, ip: &str) -> anyhow::Result<()> {
+        let ip_family =  identify_ip(ip).await?;
         // 检查现有规则
         let check_cmd = "list chain inet traffic_monitor input_stats";
         let existing_rules = self.executor.execute(check_cmd).await.unwrap_or_default();
         
         if !existing_rules.contains(&format!("\"{}\"", ip)) {
             // 添加输入流量计数规则
-            let input_rule = format!("add rule inet traffic_monitor input_stats ip saddr {} counter accept", ip);
-            let _ = self.executor.execute(&input_rule).await;
+            let input_rule = format!("add rule inet traffic_monitor input_stats {} saddr {} counter accept",ip_family,  ip);
+            let _ = self.executor.input(&input_rule).await;
             
             // 添加输出流量计数规则
-            let output_rule = format!("add rule inet traffic_monitor output_stats ip daddr {} counter accept", ip);
-            let _ = self.executor.execute(&output_rule).await;
+            let output_rule = format!("add rule inet traffic_monitor output_stats {} daddr {} counter accept", ip_family, ip);
+            let _ = self.executor.input(&output_rule).await;
         }
 
         Ok(())
@@ -504,6 +505,16 @@ impl TrafficMonitor {
     pub async fn cleanup_nftables_rules(&self) -> anyhow::Result<()> {
         let _ = self.executor.execute("delete table inet traffic_monitor").await;
         Ok(())
+    }
+}
+
+async fn identify_ip(ip_str: &str)  -> anyhow::Result<&str> {
+    match ip_str.parse::<IpAddr>() {
+        Ok(IpAddr::V4(_)) => Ok("ip"),
+        Ok(IpAddr::V6(_)) => Ok("ip6"),
+        Err(e) => {error!("{} 不是合法的 IP 地址: {}", ip_str, e);
+    Err(e.into())
+    },
     }
 }
 

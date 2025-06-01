@@ -35,9 +35,11 @@ impl Rule {
 /// 全局配置
 #[derive(Deserialize, Debug)]
 pub struct Config {
+    pub family: Option<String>,
     pub table_name: Option<String>,
     pub chain_name: Option<String>,
-    pub family: Option<String>,
+    pub hook: Option<String>,
+    pub priority: Option<i64>,
     /// 主网卡名称
     pub interface: String,
     /// 规则列表

@@ -93,15 +93,14 @@ impl RuleEngine {
                 if avg_bps > rule.threshold_bps {
                     match rule.action {
                         crate::config::Action::RateLimit { kbps, burst } => {
-                            info!("Limited the speed of {} to {}kbps", ip, kbps);
+                            debug!("intend to limit the speed of {} to {}kbps", ip, kbps);
                             fw.limit(ip, kbps).await?;
                         }
                         crate::config::Action::Ban { seconds } => {
-                            info!("Ban  {} for {} seconds", ip, seconds);
+                            debug!("intend to ban  {} for {} seconds", ip, seconds);
 
                             fw.ban(ip, seconds).await?;
-                            // fw.ban(ip, duration).await?;
-                            // fw.ban(ip).await?;
+
                         }
                     }
                 }

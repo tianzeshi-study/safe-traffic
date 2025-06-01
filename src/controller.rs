@@ -26,9 +26,11 @@ pub struct FirewallRule {
 /// 纯 Rust 防火墙控制器（使用池化的 nft 执行器）
 #[derive(Clone, Debug)]
 pub struct Firewall {
+    family: String,
     table_name: String,
     chain_name: String,
-    family: String,
+    hook: String,
+    priority: i64,
     pub rules: Arc<RwLock<HashMap<String, FirewallRule>>>,
     nft_available: bool,
     executor: Arc<NftExecutor>,
@@ -37,18 +39,22 @@ pub struct Firewall {
 impl Firewall {
     /// 初始化防火墙控制器
     pub async fn new(cfg: &Config, executor:Arc<NftExecutor>) -> Result<Self> {
-        let table_name = cfg.table_name.clone().unwrap_or("filter".to_string());
-        let chain_name = cfg.chain_name.clone().unwrap_or("SAFE_TRAFFIC".to_string());
-        let family = cfg.family.clone().unwrap_or("ip".to_string());
+        let family = cfg.family.clone().unwrap_or("inet".to_string());
+        let table_name = cfg.table_name.clone().unwrap_or("traffic_filter".to_string());
+        let chain_name = cfg.chain_name.clone().unwrap_or("traffic_input".to_string());
+        let hook = cfg.hook.clone().unwrap_or("input".to_string());
+        let priority = cfg.priority.clone().unwrap_or(0);
 
         // 检查 nftables 是否可用
         let nft_available = crate::nft::check_nftables_available().await?;
         
 
         let firewall = Firewall {
+            family,
             table_name,
             chain_name,
-            family,
+            hook,
+            priority,
             rules: Arc::new(RwLock::new(HashMap::new())),
             nft_available,
             executor,
@@ -70,16 +76,16 @@ impl Firewall {
     /// 初始化 nftables 表和链
     async fn init_table_and_chain(&self) -> Result<()> {
         let commands = vec![
-            format!("create table {} {}", self.family, self.table_name),
+            format!("add table {} {}", self.family, self.table_name),
             format!(
-                "create chain {} {} {} {{ type filter hook input priority 0 ; policy accept ; }}",
-                self.family, self.table_name, self.chain_name
+                "add chain {} {} {} {{ type filter hook {} priority 0 ; policy accept ; }}",
+                self.family, self.table_name, self.chain_name, self.hook
             ),
         ];
 
         // 使用批量执行，更高效
-        let _result1 = self.executor.execute(&commands[0]).await?;
-        let _result2 = self.executor.execute(&commands[1]).await?;
+        self.executor.input(&commands[0]).await?;
+        self.executor.input(&commands[1]).await?;
         // let _results = self.executor.execute_batch(commands).await?;
 
         debug!(
@@ -89,10 +95,6 @@ impl Firewall {
         Ok(())
     }
 
-    /// 执行 nft 命令（使用池化执行器）
-    async fn execute_nft_command(&self, command: &str) -> Result<String> {
-        self.executor.execute(command).await
-    }
 
     /// 对指定 IP 设置速率限制
     pub async fn limit(&self, ip: IpAddr, kbps: u64) -> Result<String> {
@@ -109,7 +111,7 @@ impl Firewall {
                 } = existing_rule.rule_type
                 {
                     if existing_kbps == kbps {
-                        warn!("Rule {} already exists, skipping creation", rule_id);
+                        debug!("Rule {} already exists, skipping creation", rule_id);
                         return Ok(rule_id);
                     }
                 }
@@ -147,7 +149,7 @@ impl Firewall {
             self.family, self.table_name, self.chain_name, ip_version, ip, kbps, burst
         );
 
-        self.execute_nft_command(&rule_cmd).await?;
+        self.executor.input(&rule_cmd).await?;
 
         // 返回规则标识符
         Ok(format!("limit_{}_{}", ip, Utc::now().timestamp()))
@@ -169,7 +171,7 @@ impl Firewall {
                     if let Action::Ban { seconds: _sec } = rule.rule_type {
                         let existing_until = rule.created_at + duration;
                         if existing_until > Utc::now() {
-                            warn!(
+                            debug!(
                                 "IP {} has already been banned until {}, skipping",
                                 ip, existing_until
                             );
@@ -208,7 +210,7 @@ impl Firewall {
             self.family, self.table_name, self.chain_name, ip_version, ip
         );
 
-        self.execute_nft_command(&rule_cmd).await?;
+        self.executor.input(&rule_cmd).await?;
 
         // 返回规则标识符
         Ok(format!("ban_{}_{}", ip, Utc::now().timestamp()))
@@ -309,7 +311,7 @@ impl Firewall {
             "list chain {} {} {}",
             self.family, self.table_name, self.chain_name
         );
-        self.execute_nft_command(&list_cmd).await
+        self.executor.execute(&list_cmd).await
     }
 
     /// 清理所有自管理规则
@@ -329,7 +331,7 @@ impl Firewall {
             "flush chain {} {} {}",
             self.family, self.table_name, self.chain_name
         );
-        self.execute_nft_command(&flush_cmd).await?;
+        self.executor.execute(&flush_cmd).await?;
 
         // 清空内存中的规则记录
         self.rules.write().await.clear();
