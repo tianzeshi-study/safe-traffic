@@ -84,7 +84,7 @@ impl Firewall {
             ),
         ];
 
-        // 使用批量执行，更高效
+
         self.executor.input(&commands[0]).await?;
         self.executor.input(&commands[1]).await?;
         // let _results = self.executor.execute_batch(commands).await?;

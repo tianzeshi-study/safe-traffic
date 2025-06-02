@@ -2,9 +2,10 @@ use crate::error::FirewallError;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, info, error, warn};
-use std::collections::VecDeque;
-use std::process::Stdio;
-use std::sync::Arc;
+use std::{collections::VecDeque,
+process::Stdio,
+sync::Arc,
+fs::OpenOptions};
 use tokio::io::{AsyncWriteExt,BufReader, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncRead  };
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, Semaphore};
@@ -38,11 +39,18 @@ enum NftError {
 impl NftProcess {
     /// 创建新的 nft 进程
     async fn new() -> Result<Self> {
+        let err_file = OpenOptions::new()
+        .create(true) 
+        .append(true)      
+        .open("nft-stderr.log")
+        .context("open log file fail")?;
+        
         let mut child = Command::new("nft")
             .args(["-a", "-e", "-i", "-j"]) // 交互模式
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            // .stderr(Stdio::piped())
+            .stderr(Stdio::from(err_file))
             .kill_on_drop(true)
             .spawn()
             .context("Failed to spawn nft process")?;
@@ -255,24 +263,27 @@ let full_command = format!("{}\n", command);
     }
 
     /// 优雅关闭进程
+    
+    
     async fn shutdown(mut self) -> Result<()> {
         debug!("Shutting down NFT process (commands executed: {})", self.command_count);
         
         // 尝试发送退出命令
-        self.stdin.as_mut()
-            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
-        .write(b"quit\n")
+        self.do_input("quit")
         .await
         .context("fail to write quit")?;
         
-        self.stdin.as_mut()
-            .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
-            .flush()
-        .await
-            .context("Failed to flush stdin")?;
-
-
-        // 等待进程结束，设置超时
+        // self.do_input("quit")
+        // .await
+        // .context("fail to write quit")?;
+        
+        // dbg!(&self.child, &self.stdin);
+        let timer = tokio::time::Instant::now();
+        // let result = self.child.wait().await.unwrap();
+        // let duration = timer.elapsed();
+        // dbg!(&duration);
+        // dbg!(&result);
+                // 等待进程结束，设置超时
         let wait_result = timeout(
             TokioDuration::from_secs(5),
             self.child.wait()
@@ -286,8 +297,8 @@ let full_command = format!("{}\n", command);
                 warn!("Error waiting for NFT process: {}", e);
             }
             Err(e) => {
-                warn!("NFT process shutdown timeout, forcing kill, detail: {}", e);
-                let kill_result  = self.child.kill().await;
+                debug!("NFT process shutdown timeout, forcing kill, detail: {}", e);
+                self.child.kill().await;
 
             }
         }
