@@ -1,4 +1,4 @@
-use crate::{config::Rule, controller::Firewall};
+use crate::{config::{Rule, HookType}, controller::Firewall};
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -57,8 +57,11 @@ impl RuleEngine {
         for entry in self.stats.iter() {
             let ip = *entry.key();
 
-            // let bps = entry.value().tx_bytes;
-            let bps = entry.value().rx_bytes;
+
+            let bps =  match fw.hook {
+            HookType::Input => entry.value().rx_bytes,
+            HookType::Output => entry.value().tx_bytes,
+            };
             // 获取或创建滑动窗口
             let mut win = self.windows.entry(ip).or_insert_with(|| Window {
                 buffer: vec![0; 60], // 最多支持 60 秒窗口

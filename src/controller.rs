@@ -29,7 +29,7 @@ pub struct Firewall {
     family: FamilyType,
     table_name: String,
     chain_name: String,
-    hook: HookType,
+    pub hook: HookType,
     priority: i64,
     policy: PolicyType,
     pub rules: Arc<RwLock<HashMap<String, FirewallRule>>>,
