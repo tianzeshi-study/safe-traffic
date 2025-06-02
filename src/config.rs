@@ -16,6 +16,30 @@ pub enum  FamilyType {
     Inet
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub enum PolicyType {
+    Accept,
+    Drop,
+    Reject,
+    Continue,
+    Log,
+    Count,
+}
+
+impl fmt::Display for PolicyType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // match 出对应的 nft 关键字
+        let s: &str = match self {
+            PolicyType::Accept   => "accept",
+            PolicyType::Drop     => "drop",
+            PolicyType::Reject   => "reject",
+            PolicyType::Continue => "continue",
+            PolicyType::Log      => "log",
+            PolicyType::Count    => "count",
+        };
+        write!(f, "{}", s)
+    }
+}
 
 impl fmt::Display for HookType {
     /// fmt 方法中返回 fmt::Result，
@@ -83,6 +107,7 @@ pub struct Config {
     pub chain_name: Option<String>,
     pub hook: Option<HookType>,
     pub priority: Option<i64>,
+    pub policy: Option<PolicyType>,
     /// 主网卡名称
     pub interface: String,
     /// 规则列表

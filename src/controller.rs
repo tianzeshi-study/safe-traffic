@@ -1,5 +1,5 @@
 use crate::{
-    config::{FamilyType, HookType, Action, Config},
+    config::{FamilyType, HookType, PolicyType, Action, Config},
     nft::NftExecutor,
 };
 use anyhow::Result;
@@ -31,6 +31,7 @@ pub struct Firewall {
     chain_name: String,
     hook: HookType,
     priority: i64,
+    policy: PolicyType,
     pub rules: Arc<RwLock<HashMap<String, FirewallRule>>>,
     nft_available: bool,
     executor: Arc<NftExecutor>,
@@ -45,6 +46,7 @@ impl Firewall {
         let chain_name = cfg.chain_name.clone().unwrap_or("traffic_input".to_string());
         let hook = cfg.hook.clone().unwrap_or(HookType::Input);
         let priority = cfg.priority.clone().unwrap_or(0);
+        let policy = cfg.policy.clone().unwrap_or(PolicyType::Accept);
 
         // 检查 nftables 是否可用
         let nft_available = crate::nft::check_nftables_available().await?;
@@ -56,6 +58,7 @@ impl Firewall {
             chain_name,
             hook,
             priority,
+            policy,
             rules: Arc::new(RwLock::new(HashMap::new())),
             nft_available,
             executor,
@@ -79,8 +82,8 @@ impl Firewall {
         let commands = vec![
             format!("add table {} {}", self.family, self.table_name),
             format!(
-                "add chain {} {} {} {{ type filter hook {} priority 0 ; policy accept ; }}",
-                self.family, self.table_name, self.chain_name, self.hook
+                "add chain {} {} {} {{ type filter hook {} priority {}  ; policy {} ; }}",
+                self.family, self.table_name, self.chain_name, self.hook, self.priority, self.policy
             ),
         ];
 
@@ -150,8 +153,8 @@ impl Firewall {
         };
 
         let rule_cmd = format!(
-            "add rule {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes accept",
-            self.family, self.table_name, self.chain_name, ip_version, ip, kbps, burst
+            "add rule {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes {}",
+            self.family, self.table_name, self.chain_name, ip_version, ip, kbps, burst, self.policy
         );
 
         self.executor.input(&rule_cmd).await?;
@@ -434,27 +437,3 @@ impl Drop for Firewall {
 
 
 
-pub async fn get_family_type(family_types: &Option<FamilyType>) ->  String {
-    if let Some(fts) = family_types { 
-    match fts {
-        FamilyType::Ip4 => "ip".to_string(),
-        FamilyType::Ip6 => "ip6".to_string(),
-        FamilyType::Inet => "inet".to_string(),
-    }
-    } else {
-        "ip".to_string()
-    }
-    
-}
-
-pub async fn get_hook_type(hook_types: &Option<HookType>) ->  String {
-    if let Some(hts) = hook_types { 
-    match hts {
-        HookType::Input => "input".to_string(),
-        HookType::Output => "output".to_string(),
-    }
-    } else {
-        "input".to_string()
-    }
-    
-}
