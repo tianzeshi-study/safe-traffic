@@ -26,10 +26,10 @@ pub struct FirewallRule {
 /// 纯 Rust 防火墙控制器（使用池化的 nft 执行器）
 #[derive(Clone, Debug)]
 pub struct Firewall {
-    family: String,
+    family: FamilyType,
     table_name: String,
     chain_name: String,
-    hook: String,
+    hook: HookType,
     priority: i64,
     pub rules: Arc<RwLock<HashMap<String, FirewallRule>>>,
     nft_available: bool,
@@ -39,11 +39,11 @@ pub struct Firewall {
 impl Firewall {
     /// 初始化防火墙控制器
     pub async fn new(cfg: &Config, executor:Arc<NftExecutor>) -> Result<Self> {
-        let family = get_family_type(&cfg.family).await;
+
+        let family = cfg.family.clone().unwrap_or(FamilyType::Inet);
         let table_name = cfg.table_name.clone().unwrap_or("traffic_filter".to_string());
         let chain_name = cfg.chain_name.clone().unwrap_or("traffic_input".to_string());
-
-        let hook = get_hook_type(&cfg.hook).await;
+        let hook = cfg.hook.clone().unwrap_or(HookType::Input);
         let priority = cfg.priority.clone().unwrap_or(0);
 
         // 检查 nftables 是否可用

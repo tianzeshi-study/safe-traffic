@@ -1,20 +1,49 @@
 use serde::Deserialize;
-use std::{collections::HashSet, fs, net::IpAddr, path::Path};
+use std::{collections::HashSet, fs, net::IpAddr, path::Path, fmt};
 
 /// hook type , input or output 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub enum  HookType {
     Input,
     Output,
 }
 
 /// family type , ipV4 ,  ipV6  or both(inet)
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub enum  FamilyType {
     Ip4,
     Ip6,
     Inet
 }
+
+
+impl fmt::Display for HookType {
+    /// fmt 方法中返回 fmt::Result，
+/// 方便链式调用 write! 等宏
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 先 match 出对应的字符串 slice
+        let s: &str = match self {
+            HookType::Input  => "input",
+            HookType::Output => "output",
+        };
+        // 将字符串写入 f
+        write!(f, "{}", s)
+    }
+}
+
+impl fmt::Display for FamilyType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &str = match self {
+            FamilyType::Ip4  => "ip4",
+            FamilyType::Ip6  => "ip6",
+            FamilyType::Inet => "inet",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+
+
 /// 单条规则动作类型：限速或封禁
 #[derive(Deserialize, Debug, Clone)]
 pub enum Action {
