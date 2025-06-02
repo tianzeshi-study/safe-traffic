@@ -1,5 +1,5 @@
 use crate::{
-    config::{Action, Config},
+    config::{FamilyType, HookType, Action, Config},
     nft::NftExecutor,
 };
 use anyhow::Result;
@@ -39,10 +39,11 @@ pub struct Firewall {
 impl Firewall {
     /// 初始化防火墙控制器
     pub async fn new(cfg: &Config, executor:Arc<NftExecutor>) -> Result<Self> {
-        let family = cfg.family.clone().unwrap_or("inet".to_string());
+        let family = get_family_type(&cfg.family).await;
         let table_name = cfg.table_name.clone().unwrap_or("traffic_filter".to_string());
         let chain_name = cfg.chain_name.clone().unwrap_or("traffic_input".to_string());
-        let hook = cfg.hook.clone().unwrap_or("input".to_string());
+
+        let hook = get_hook_type(&cfg.hook).await;
         let priority = cfg.priority.clone().unwrap_or(0);
 
         // 检查 nftables 是否可用
@@ -97,9 +98,13 @@ impl Firewall {
 
 
     /// 对指定 IP 设置速率限制
-    pub async fn limit(&self, ip: IpAddr, kbps: u64) -> Result<String> {
+    pub async fn limit(&self, ip: IpAddr, kbps: u64, burst: Option<u64>) -> Result<String> {
         let rule_id = format!("limit_{}_{}", ip, kbps);
-        let burst = kbps.min(1024) / 10;
+        let burst  = if let Some(bur) = burst {
+            bur
+        }else  { 
+        kbps.min(1024) / 10
+        };
 
         // 检查是否已存在相同规则
         {
@@ -123,7 +128,7 @@ impl Firewall {
         let rule = FirewallRule {
             id: rule_id.clone(),
             ip,
-            rule_type: Action::RateLimit { kbps, burst },
+            rule_type: Action::RateLimit { kbps, burst: Some(burst) },
             created_at: Utc::now(),
             handle: Some(handle),
         };
@@ -418,9 +423,38 @@ impl Firewall {
 impl Drop for Firewall {
     fn drop(&mut self) {
         // 异步清理执行器池
-        let executor = self.executor.clone();
+        let executor = Arc::clone(&self.executor);
         tokio::spawn(async move {
-            let _ = executor.cleanup().await;
+            debug!("cleanup nft executor");
+            executor.cleanup().await.unwrap();
         });
     }
+}
+
+
+
+
+pub async fn get_family_type(family_types: &Option<FamilyType>) ->  String {
+    if let Some(fts) = family_types { 
+    match fts {
+        FamilyType::Ip4 => "ip".to_string(),
+        FamilyType::Ip6 => "ip6".to_string(),
+        FamilyType::Inet => "inet".to_string(),
+    }
+    } else {
+        "ip".to_string()
+    }
+    
+}
+
+pub async fn get_hook_type(hook_types: &Option<HookType>) ->  String {
+    if let Some(hts) = hook_types { 
+    match hts {
+        HookType::Input => "input".to_string(),
+        HookType::Output => "output".to_string(),
+    }
+    } else {
+        "input".to_string()
+    }
+    
 }

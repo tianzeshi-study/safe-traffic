@@ -94,7 +94,7 @@ impl RuleEngine {
                     match rule.action {
                         crate::config::Action::RateLimit { kbps, burst } => {
                             debug!("intend to limit the speed of {} to {}kbps", ip, kbps);
-                            fw.limit(ip, kbps).await?;
+                            fw.limit(ip, kbps, burst).await?;
                         }
                         crate::config::Action::Ban { seconds } => {
                             debug!("intend to ban  {} for {} seconds", ip, seconds);

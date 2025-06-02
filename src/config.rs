@@ -1,11 +1,25 @@
 use serde::Deserialize;
 use std::{collections::HashSet, fs, net::IpAddr, path::Path};
 
+/// hook type , input or output 
+#[derive(Deserialize, Debug)]
+pub enum  HookType {
+    Input,
+    Output,
+}
+
+/// family type , ipV4 ,  ipV6  or both(inet)
+#[derive(Deserialize, Debug)]
+pub enum  FamilyType {
+    Ip4,
+    Ip6,
+    Inet
+}
 /// 单条规则动作类型：限速或封禁
 #[derive(Deserialize, Debug, Clone)]
 pub enum Action {
     /// 限速模式，参数：kbit/s
-    RateLimit { kbps: u64, burst: u64 },
+    RateLimit { kbps: u64, burst: Option<u64> },
     /// 封禁模式，参数：秒
     Ban { seconds: u64 },
 }
@@ -35,23 +49,24 @@ impl Rule {
 /// 全局配置
 #[derive(Deserialize, Debug)]
 pub struct Config {
-    pub family: Option<String>,
+    pub family: Option<FamilyType>,
     pub table_name: Option<String>,
     pub chain_name: Option<String>,
-    pub hook: Option<String>,
+    pub hook: Option<HookType>,
     pub priority: Option<i64>,
     /// 主网卡名称
     pub interface: String,
     /// 规则列表
     pub rules: Vec<Rule>,
     /// 日志保留路径
-    pub log_path: String,
+    pub log_path: Option<String>,
     pub monitor_interval: Option<u64>, // 监控间隔（秒）
     pub rule_check_interval: Option<u64>,
     pub executor_pool_size: Option<usize>,    // 默认 5
     pub executor_max_age_secs: Option<i64>,   // 默认 300 秒
     pub executor_max_commands: Option<usize>, // 默认 100 条命令
 }
+
 
 impl Config {
     /// 从文件加载配置
@@ -64,6 +79,9 @@ impl Config {
         Ok(cfg)
     }
 }
+
+
+
 
 #[cfg(test)]
 mod tests {
