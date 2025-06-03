@@ -176,7 +176,7 @@ impl Firewall {
             self.family, self.table_name, self.chain_name, ip_version, ip, kbps, burst, self.policy
         );
 
-        self.executor.input(&rule_cmd).await?;
+        self.executor.execute(&rule_cmd).await?;
 
         // 返回规则标识符
         Ok(format!("limit_{}_{}", ip, Utc::now().timestamp()))

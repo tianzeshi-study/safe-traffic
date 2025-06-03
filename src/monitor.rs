@@ -133,6 +133,7 @@ impl TrafficMonitor {
 
     /// 启动流量监控
     pub async fn start(&self) -> anyhow::Result<()> {
+        self.setup_nft_table_structure().await?;
         let mut interval = time::interval(self.update_interval);
 
         loop {
@@ -274,7 +275,7 @@ impl TrafficMonitor {
 
     /// 确保 nftables 规则存在
     async fn ensure_nftables_rules(&self) -> anyhow::Result<()> {
-        self.setup_nft_table_structure().await?;
+        // self.setup_nft_table_structure().await?;
 
         let active_ips = self.get_active_ips().await?;
         for ip in active_ips {
@@ -289,18 +290,18 @@ impl TrafficMonitor {
 
         
 
-                
+                /*
         self.executor
-            .input("add table inet traffic_monitor")
+            .execute("add table inet traffic_monitor")
             .await?;
-            self.executor.input(
+            self.executor.execute(
             "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }"
         ).await?;
 
-            self.executor.input(
+            self.executor.execute(
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }"
         ).await?;
-            /*
+            */
             let commands = vec![
             "add table inet traffic_monitor".to_string(),
             "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }".to_string(),
@@ -316,7 +317,7 @@ impl TrafficMonitor {
             return Err(e);
         }
     };
-        */
+
 
         
 

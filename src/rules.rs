@@ -133,7 +133,8 @@ impl RuleEngine {
             for id in ids.clone() {
                 match rule.action {
                     crate::config::Action::RateLimit { kbps, burst } => {
-                        debug!("intend to unlimit the speed of {} to {}kbps", ip, kbps);
+                        continue;
+                        // debug!("intend to unlimit the speed of {} to {}kbps", ip, kbps);
                         // fw.limit(ip, kbps, burst).await?;
                     }
                     crate::config::Action::Ban { seconds } => {
