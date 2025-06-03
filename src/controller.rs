@@ -35,6 +35,7 @@ pub struct Firewall {
     executor: Arc<NftExecutor>,
 }
 
+#[allow(dead_code)]
 impl Firewall {
     /// 初始化防火墙控制器
     pub async fn new(cfg: &Config, executor: Arc<NftExecutor>) -> Result<Self> {
@@ -66,7 +67,7 @@ impl Firewall {
             executor,
         };
 
-        if nft_available {
+        if firewall.nft_available {
             // 初始化表和链
             firewall.init_table_and_chain().await?;
         } else {
@@ -96,7 +97,7 @@ impl Firewall {
         // self.executor.input(&commands[0]).await?;
         // self.executor.input(&commands[1]).await?;
         match self.executor.execute_batch(commands).await {
-            Ok(s) => {}
+            Ok(_s) => {}
             Err(e) => {
                 // 试着把 anyhow::Error 转回 NftError
                 if let Some(NftError::Timeout) = e.downcast_ref::<NftError>() {
@@ -162,6 +163,10 @@ impl Firewall {
         );
 
         Ok(rule_id)
+    }
+    
+    async fn is_nft_available(&self) -> bool {
+        self.nft_available
     }
 
     /// 创建速率限制规则
@@ -239,7 +244,7 @@ impl Firewall {
         };
 
         self.rules.write().await.insert(rule_id.clone(), rule);
-        info!("Banned {} until {}", ip, until);
+        info!("Banned {} until {} \n rule id : {}", ip, until, &rule_id);
 
         Ok(rule_id)
     }
@@ -273,7 +278,8 @@ impl Firewall {
             // if rule.ip == ip {
             let expiration = rule.created_at + duration;
 
-            now > expiration
+            let result =  now > expiration;
+            result
         } else {
             false
         }
@@ -294,7 +300,7 @@ impl Firewall {
                 .ok_or_else(|| anyhow!("rule has no handle: {}", id))?
         };
 
-        let unban_result = self.remove_rule_by_handle(&handle).await?;
+        let _unban_result = self.remove_rule_by_handle(&handle).await?;
 
         let removed = {
             let mut rules = self.rules.write().await;
@@ -302,7 +308,7 @@ impl Firewall {
         };
 
         if let Some(_) = removed {
-            info!("Unblocked successful, remove rule: {}", id);
+            info!("Unblocked successful,\n remove rule: {}", id);
         } else {
             warn!("fail to remove rule, maybe not exist: {}", id);
             return Err(anyhow!("fail to remove rule, maybe not exist: {}", id));
@@ -320,7 +326,7 @@ impl Firewall {
             self.family, self.table_name, self.chain_name, handle
         );
 
-        let unban_output = self.executor.input(&remove_command).await?;
+        let _unban_output = self.executor.input(&remove_command).await?;
 
         debug!("execute command to delete nft rule: {}", &remove_command);
 
@@ -374,7 +380,7 @@ impl Firewall {
 
     /// 获取当前 nftables 规则（从系统读取）
     pub async fn get_system_rules(&self) -> Result<String> {
-        if !self.nft_available {
+        if !self.is_nft_available().await {
             return Ok("nftables not available".to_string());
         }
 
@@ -415,7 +421,7 @@ impl Firewall {
     }
 
     /// 检查防火墙状态
-    pub async fn status(&self) -> Result<String> {
+    async fn status(&self) -> Result<String> {
         let rules = self.rules.read().await;
         let active_count = rules.len();
         let expired_count = rules
@@ -435,7 +441,7 @@ impl Firewall {
 
         Ok(format!(
             "防火墙状态:\n- nftables 可用: {}\n- 活跃规则: {}\n- 过期规则: {}\n- 表名: {}\n- 链名: {}\n- 执行器池大小: {}\n- 可用执行器: {}",
-            self.nft_available, active_count, expired_count, self.table_name, self.chain_name, pool_size, available_permits
+            self.is_nft_available().await, active_count, expired_count, self.table_name, self.chain_name, pool_size, available_permits
         ))
     }
 

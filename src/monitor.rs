@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     controller::Firewall,
-    nft::{NftError, NftExecutor},
+    nft::{NftError, NftExecutor, parser::*},
     rules::{RuleEngine, TrafficStats},
 };
 use dashmap::DashMap;
@@ -20,90 +20,16 @@ use tokio::{sync::RwLock, time};
 /// 每个IP的详细流量统计
 #[derive(Debug, Clone)]
 pub struct IpTrafficStats {
+    #[allow(dead_code)]
     pub ip: IpAddr,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub rx_packets: u64,
     pub tx_packets: u64,
+    #[allow(dead_code)]
     pub last_updated: Instant,
 }
 
-/// NFT JSON 输出结构体
-#[derive(Debug, Deserialize)]
-struct NftJsonOutput {
-    nftables: Vec<NftObject>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum NftObject {
-    Chain(ChainObject),
-    Rule(RuleObject),
-    Other(serde_json::Value),
-}
-
-#[derive(Debug, Deserialize)]
-struct ChainObject {
-    chain: Chain,
-}
-
-#[derive(Debug, Deserialize)]
-struct Chain {
-    family: String,
-    table: String,
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct RuleObject {
-    rule: Rule,
-}
-
-#[derive(Debug, Deserialize)]
-struct Rule {
-    family: String,
-    table: String,
-    chain: String,
-    handle: Option<u64>,
-    expr: Option<Vec<Expression>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum Expression {
-    Match(MatchExpr),
-    Counter(CounterExpr),
-    Accept(AcceptExpr),
-    Other(serde_json::Value),
-}
-
-#[derive(Debug, Deserialize)]
-struct MatchExpr {
-    r#match: Match,
-}
-
-#[derive(Debug, Deserialize)]
-struct Match {
-    op: String,
-    left: serde_json::Value,
-    right: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-struct CounterExpr {
-    counter: Counter,
-}
-
-#[derive(Debug, Deserialize)]
-struct Counter {
-    packets: u64,
-    bytes: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct AcceptExpr {
-    accept: Option<serde_json::Value>,
-}
 
 /// 流量监控器
 pub struct TrafficMonitor {
@@ -286,25 +212,13 @@ impl TrafficMonitor {
 
     /// 设置 nftables 表和链结构
     async fn setup_nft_table_structure(&self) -> anyhow::Result<()> {
-        /*
-        self.executor
-            .execute("add table inet traffic_monitor")
-            .await?;
-            self.executor.execute(
-            "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }"
-        ).await?;
-
-            self.executor.execute(
-            "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }"
-        ).await?;
-            */
-        let commands = vec![
+                let commands = vec![
             "add table inet traffic_monitor".to_string(),
             "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }".to_string(),
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }".to_string()
             ];
         match self.executor.execute_batch(commands).await {
-            Ok(s) => {}
+            Ok(_s) => {}
             Err(e) => {
                 if let Some(NftError::Timeout) = e.downcast_ref::<NftError>() {
                     warn!("timeout, maybe monitor already exist");

@@ -1,9 +1,9 @@
-mod parser;
+pub mod parser;
+pub use parser::{parse_output, NftObject};
 use crate::error::FirewallError;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, error, info, warn};
-pub use parser::{parse_output, NftObject};
 use std::{collections::VecDeque, fs::OpenOptions, process::Stdio, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
