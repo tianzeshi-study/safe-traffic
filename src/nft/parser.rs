@@ -9,6 +9,7 @@ pub struct NftJsonOutput {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum NftObject {
+    #[allow(dead_code)]
     Chain(ChainObject),
     Rule(RuleObject),
     Add(AddObject),
@@ -16,11 +17,13 @@ pub enum NftObject {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ChainObject {
     chain: Chain,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Chain {
     family: String,
     table: String,
@@ -39,6 +42,7 @@ impl RuleObject {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Rule {
     family: String,
     table: String,
@@ -72,7 +76,9 @@ impl AddObject {
 pub enum Expression {
     Match(MatchExpr),
     Counter(CounterExpr),
+    #[allow(dead_code)]
     Accept(AcceptExpr),
+    #[allow(dead_code)]
     Other(serde_json::Value),
 }
 
@@ -83,6 +89,7 @@ pub struct MatchExpr {
 
 #[derive(Debug, Deserialize)]
 pub struct Match {
+    #[allow(dead_code)]
     op: String,
     pub left: serde_json::Value,
     pub right: serde_json::Value,
@@ -101,6 +108,7 @@ pub struct Counter {
 
 #[derive(Debug, Deserialize)]
 pub struct AcceptExpr {
+    #[allow(dead_code)]
     accept: Option<serde_json::Value>,
 }
 

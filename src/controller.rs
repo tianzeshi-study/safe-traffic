@@ -164,7 +164,7 @@ impl Firewall {
 
         Ok(rule_id)
     }
-    
+
     async fn is_nft_available(&self) -> bool {
         self.nft_available
     }
@@ -278,7 +278,7 @@ impl Firewall {
             // if rule.ip == ip {
             let expiration = rule.created_at + duration;
 
-            let result =  now > expiration;
+            let result = now > expiration;
             result
         } else {
             false

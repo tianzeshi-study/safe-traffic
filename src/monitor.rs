@@ -1,14 +1,13 @@
 use crate::{
     config::Config,
     controller::Firewall,
-    nft::{NftError, NftExecutor, parser::*},
+    nft::{parser::*, NftError, NftExecutor},
     rules::{RuleEngine, TrafficStats},
 };
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
 use log::{debug, error, info, warn};
 use rtnetlink::{new_connection, Handle};
-use serde::Deserialize;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -30,10 +29,10 @@ pub struct IpTrafficStats {
     pub last_updated: Instant,
 }
 
-
 /// 流量监控器
 pub struct TrafficMonitor {
     handle: Handle,
+    #[allow(dead_code)]
     interface: String,
     stats: Arc<DashMap<IpAddr, TrafficStats>>,
     update_interval: Duration,
@@ -212,7 +211,7 @@ impl TrafficMonitor {
 
     /// 设置 nftables 表和链结构
     async fn setup_nft_table_structure(&self) -> anyhow::Result<()> {
-                let commands = vec![
+        let commands = vec![
             "add table inet traffic_monitor".to_string(),
             "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }".to_string(),
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }".to_string()
@@ -445,6 +444,7 @@ impl TrafficMonitor {
     }
 
     /// 清理 nftables 规则
+    #[allow(dead_code)]
     pub async fn cleanup_nftables_rules(&self) -> anyhow::Result<()> {
         let _ = self
             .executor

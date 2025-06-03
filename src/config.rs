@@ -134,7 +134,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use std::io::Write;
     use tempfile::NamedTempFile;
     use toml;
@@ -145,7 +145,10 @@ mod tests {
         // Wrap in a table to match Action::RateLimit structure
         let action: Action = toml::from_str(&s).unwrap();
         match action {
-            Action::RateLimit { kbps, burst: _burst } => assert_eq!(kbps, 200),
+            Action::RateLimit {
+                kbps,
+                burst: _burst,
+            } => assert_eq!(kbps, 200),
             _ => panic!("Expected RateLimit variant"),
         }
     }
@@ -172,7 +175,10 @@ mod tests {
         assert_eq!(rule.window_secs, 30);
         assert_eq!(rule.threshold_bps, 1000);
         match rule.action {
-            Action::RateLimit { kbps, burst: _burst } => assert_eq!(kbps, 200),
+            Action::RateLimit {
+                kbps,
+                burst: _burst,
+            } => assert_eq!(kbps, 200),
             _ => panic!("Expected RateLimit action"),
         }
     }
@@ -219,7 +225,10 @@ mod tests {
         assert_eq!(r1.window_secs, 20);
         assert_eq!(r1.threshold_bps, 1500);
         match r1.action {
-            Action::RateLimit { kbps, burst: _burst } => assert_eq!(kbps, 300),
+            Action::RateLimit {
+                kbps,
+                burst: _burst,
+            } => assert_eq!(kbps, 300),
             _ => panic!("Expected RateLimit action"),
         }
 

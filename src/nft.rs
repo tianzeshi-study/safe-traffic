@@ -1,9 +1,9 @@
 pub mod parser;
-pub use parser::{parse_output, NftObject};
 use crate::error::FirewallError;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, error, info, warn};
+pub use parser::{parse_output, NftObject};
 use std::{collections::VecDeque, fs::OpenOptions, process::Stdio, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -17,6 +17,7 @@ struct NftProcess {
     child: Child,
     stdin: Option<tokio::process::ChildStdin>,
     stdout_reader: Option<BufReader<tokio::process::ChildStdout>>,
+    #[allow(dead_code)]
     stderr_reader: Option<BufReader<tokio::process::ChildStderr>>,
     created_at: DateTime<Utc>,
     last_used: DateTime<Utc>,
@@ -25,6 +26,7 @@ struct NftProcess {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum NftError {
     #[error("Process not available: {0}")]
     ProcessNotAvailable(String),
@@ -203,6 +205,7 @@ impl NftProcess {
     }
 
     /// 执行批量命令
+    #[allow(dead_code)]
     async fn execute_batch(&mut self, commands: &[&str]) -> Result<Vec<String>> {
         let mut results = Vec::with_capacity(commands.len());
 
@@ -251,6 +254,7 @@ impl NftProcess {
     }
 
     /// 获取进程统计信息
+    #[allow(dead_code)]
     fn get_stats(&self) -> ProcessStats {
         ProcessStats {
             created_at: self.created_at,
@@ -301,6 +305,7 @@ impl NftProcess {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ProcessStats {
     created_at: DateTime<Utc>,
     last_used: DateTime<Utc>,
