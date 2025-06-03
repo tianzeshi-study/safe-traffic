@@ -1,0 +1,16 @@
+table_name = "traffic_filter"
+chain_name = "input_chain"
+interface = "eth0"
+
+[[rules]]
+window_secs = 20
+threshold_bps = 1_000_000
+action = { Ban = { seconds = 5 } }
+
+[[rules]]
+window_secs = 10
+threshold_bps = 500_000
+action = { RateLimit = { kbps = 1} }
+
+        
+

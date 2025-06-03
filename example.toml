@@ -1,0 +1,27 @@
+family = "Inet" # Ip4 Ip6 or Inet for both , default Inet
+table_name = "traffic_filter"
+chain_name = "input_chain"
+interface = "eth0" #  network interface to monitor
+hook = "Input" # Input or Output  for traffic direction, default Input
+priority =0  
+policy = "Accept"
+monitor_interval =1  # traffic monitor interval , default 1 s 
+rule_check_interval = 1
+executor_pool_size =5 # nft subprocess  max size 
+executor_max_age_secs = 300
+executor_max_commands = 100
+
+[[rules]]
+window_secs = 20
+threshold_bps = 1_000_000
+action = { Ban = { seconds = 5 } }
+excluded_ips = ["10.255.255.0"]
+
+
+[[rules]]
+window_secs = 10
+threshold_bps = 500_000
+action = { RateLimit = { kbps = 1, burst = 1} }
+excluded_ips = ["::100:0"]
+        
+

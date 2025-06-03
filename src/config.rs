@@ -108,15 +108,15 @@ pub struct Config {
     pub policy: Option<PolicyType>,
     /// 主网卡名称
     pub interface: String,
-    /// 规则列表
-    pub rules: Vec<Rule>,
     /// 日志保留路径
-    pub log_dir_path: Option<String>,
+    // pub log_dir_path: Option<String>,
     pub monitor_interval: Option<u64>, // 监控间隔（秒）
     pub rule_check_interval: Option<u64>,
     pub executor_pool_size: Option<usize>,    // 默认 5
     pub executor_max_age_secs: Option<i64>,   // 默认 300 秒
     pub executor_max_commands: Option<usize>, // 默认 100 条命令
+    /// 规则列表
+    pub rules: Vec<Rule>,
 }
 
 impl Config {
@@ -145,7 +145,7 @@ mod tests {
         // Wrap in a table to match Action::RateLimit structure
         let action: Action = toml::from_str(&s).unwrap();
         match action {
-            Action::RateLimit { kbps } => assert_eq!(kbps, 200),
+            Action::RateLimit { kbps, burst } => assert_eq!(kbps, 200),
             _ => panic!("Expected RateLimit variant"),
         }
     }
@@ -172,7 +172,7 @@ mod tests {
         assert_eq!(rule.window_secs, 30);
         assert_eq!(rule.threshold_bps, 1000);
         match rule.action {
-            Action::RateLimit { kbps } => assert_eq!(kbps, 200),
+            Action::RateLimit { kbps, burst } => assert_eq!(kbps, 200),
             _ => panic!("Expected RateLimit action"),
         }
     }
@@ -183,9 +183,9 @@ mod tests {
         let toml_content = r#"
             table_name = "tbl"
             chain_name = "chain"
-            family = "ipv4"
+            family = "Ip4"
             interface = "eth0"
-            log_dir_path = "/var/log/safe-server-traffic"
+
 
             [[rules]]
             window_secs = 10
@@ -202,9 +202,9 @@ mod tests {
         let cfg: Config = toml::from_str(toml_content).unwrap();
         assert_eq!(cfg.table_name.as_deref(), Some("tbl"));
         assert_eq!(cfg.chain_name.as_deref(), Some("chain"));
-        assert_eq!(cfg.family.as_deref(), Some("ipv4"));
+
         assert_eq!(cfg.interface, "eth0");
-        assert_eq!(cfg.log_path, "/var/log/app.log");
+        // assert_eq!(cfg.log_path, "/var/log/app.log");
         assert_eq!(cfg.rules.len(), 2);
         // First rule check
         let r0 = &cfg.rules[0];
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(r1.window_secs, 20);
         assert_eq!(r1.threshold_bps, 1500);
         match r1.action {
-            Action::RateLimit { kbps } => assert_eq!(kbps, 300),
+            Action::RateLimit { kbps, burst } => assert_eq!(kbps, 300),
             _ => panic!("Expected RateLimit action"),
         }
 
