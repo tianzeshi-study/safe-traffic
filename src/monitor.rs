@@ -186,6 +186,7 @@ impl TrafficMonitor {
         ip_stats: &mut HashMap<IpAddr, IpTrafficStats>,
         direction: &str,
     ) -> anyhow::Result<()> {
+
         let nft_data: NftJsonOutput = serde_json::from_str(json_output)
             .map_err(|e| anyhow::anyhow!("解析 NFT JSON 失败: {}", e))?;
 
@@ -287,21 +288,22 @@ impl TrafficMonitor {
     async fn setup_nft_table_structure(&self) -> anyhow::Result<()> {
 
         
-/*
-        self.executor.input(
-            "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }"
-        ).await?;
-        
+
+                
         self.executor
             .input("add table inet traffic_monitor")
             .await?;
             self.executor.input(
+            "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }"
+        ).await?;
+
+            self.executor.input(
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }"
         ).await?;
-            */
+            /*
             let commands = vec![
-            "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }".to_string(),
             "add table inet traffic_monitor".to_string(),
+            "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }".to_string(),
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }".to_string()
             ];
             match  self.executor.execute_batch(commands).await {
@@ -314,6 +316,7 @@ impl TrafficMonitor {
             return Err(e);
         }
     };
+        */
 
         
 

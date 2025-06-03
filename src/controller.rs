@@ -1,6 +1,6 @@
 use crate::{
     config::{Action, Config, FamilyType, HookType, PolicyType},
-    nft::{NftExecutor,NftError},
+    nft::{NftExecutor,NftError, NftObject, parse_output},
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
@@ -96,7 +96,7 @@ impl Firewall {
         // self.executor.input(&commands[0]).await?;
         // self.executor.input(&commands[1]).await?;
         match  self.executor.execute_batch(commands).await {
-            Ok(s) => {dbg!(&s);},
+            Ok(s) => {},
             Err(e) => {
                 // 试着把 anyhow::Error 转回 NftError
                 if let Some(NftError::Timeout) = e.downcast_ref::<NftError>() {
@@ -185,7 +185,8 @@ impl Firewall {
     /// 对指定 IP 封禁指定时长
     pub async fn ban(&self, ip: IpAddr, seconds: u64) -> Result<String> {
         let duration = Duration::seconds(seconds as i64);
-        let until = Utc::now() + duration;
+        let now = Utc::now();
+        let until = now + duration;
         let rule_id = format!("ban_{}_{}", ip, until.timestamp());
 
         // 检查是否已被封禁
@@ -208,13 +209,26 @@ impl Firewall {
             }
         }
 
-        let handle = self.create_ban_rule(ip).await?;
+        let output_with_handle = self.create_ban_rule(ip).await?;
+        let nft_objs = parse_output(&output_with_handle).await?;
+        
+        let nft_obj = nft_objs.get(0)
+        .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
+
+        let handle = match nft_obj {
+            NftObject::Add(obj) => obj.get_handle()
+            .await
+            .ok_or_else(|| anyhow!("fail to get "))?
+            .to_string(),
+            NftObject::Other(other) => {return Err(anyhow!("parse output error: {:?}", other));},
+            _ => {return Err(anyhow!("parse output error: {:?}", nft_obj));},
+        };
 
         let rule = FirewallRule {
             id: rule_id.clone(),
             ip,
             rule_type: Action::Ban { seconds },
-            created_at: Utc::now(),
+            created_at: now,
             handle: Some(handle),
         };
 
@@ -237,10 +251,12 @@ impl Firewall {
         );
 
         let output_with_handle = self.executor.execute(&rule_cmd).await?;
-        dbg!(&output_with_handle);
+
 
         // 返回规则标识符
-        Ok(format!("ban_{}_{}", ip, Utc::now().timestamp()))
+        // Ok(format!("ban_{}_{}", ip, Utc::now().timestamp()))
+        // Ok((format!("ban_{}_{}", ip, Utc::now().timestamp()), output_with_handle)
+        Ok(output_with_handle)
     }
 
     pub async fn is_expiration(&self, rule_id: &str, seconds: u64) -> bool {
