@@ -1,16 +1,12 @@
 use crate::error::FirewallError;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use log::{debug, info, error, warn};
-use std::{collections::VecDeque,
-process::Stdio,
-sync::Arc,
-fs::OpenOptions};
-use tokio::io::{AsyncWriteExt,BufReader, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncRead  };
+use log::{debug, error, info, warn};
+use std::{collections::VecDeque, fs::OpenOptions, process::Stdio, sync::Arc};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{timeout, Duration as TokioDuration};
-
 
 #[derive(Debug)]
 struct NftProcess {
@@ -40,11 +36,11 @@ impl NftProcess {
     /// 创建新的 nft 进程
     async fn new() -> Result<Self> {
         let err_file = OpenOptions::new()
-        .create(true) 
-        .append(true)      
-        .open("nft-stderr.log")
-        .context("open log file fail")?;
-        
+            .create(true)
+            .append(true)
+            .open("nft-stderr.log")
+            .context("open log file fail")?;
+
         let mut child = Command::new("nft")
             .args(["-a", "-e", "-i", "-j"]) // 交互模式
             .stdin(Stdio::piped())
@@ -55,10 +51,7 @@ impl NftProcess {
             .spawn()
             .context("Failed to spawn nft process")?;
 
-
-        
-
-                        let mut stdin = child.stdin.take();
+        let stdin = child.stdin.take();
         let stdout = child.stdout.take().map(BufReader::new);
         let stderr = child.stderr.take().map(BufReader::new);
 
@@ -76,7 +69,7 @@ impl NftProcess {
 
         // 等待 nft 进程初始化完成
         process.wait_for_ready().await?;
-        
+
         Ok(process)
     }
 
@@ -85,9 +78,9 @@ impl NftProcess {
         // 发送一个简单的命令来测试进程是否准备就绪
         let test_result = timeout(
             TokioDuration::from_secs(10),
-            self.do_execute_internal("list tables")
-        ).await;
-
+            self.do_execute_internal("list tables"),
+        )
+        .await;
 
         match test_result {
             Ok(Ok(_)) => {
@@ -122,8 +115,9 @@ impl NftProcess {
         // 设置命令执行超时
         let result = timeout(
             TokioDuration::from_secs(10),
-            self.do_execute_internal(command)
-        ).await;
+            self.do_execute_internal(command),
+        )
+        .await;
 
         self.is_busy = false;
 
@@ -145,70 +139,69 @@ impl NftProcess {
 
     /// 内部执行命令的实现
     async fn do_execute_internal(&mut self, command: &str) -> Result<String> {
-
         // let stdin = self.stdin.as_mut()
-            // .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?;
+        // .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?;
         // let stdout_reader = self.stdout_reader.as_mut()
-            // .ok_or_else(|| NftError::ProcessNotAvailable("stdout not available".to_string()))?;
+        // .ok_or_else(|| NftError::ProcessNotAvailable("stdout not available".to_string()))?;
 
         // let stderr_reader = self.stderr_reader.as_mut()
-            // .ok_or_else(|| NftError::ProcessNotAvailable("stderr not available".to_string()))?;
-let full_command = format!("{}\n", command); 
+        // .ok_or_else(|| NftError::ProcessNotAvailable("stderr not available".to_string()))?;
+        let full_command = format!("{}\n", command);
 
         // 发送命令
-        let b = self.stdin.as_mut()
+        let _b = self
+            .stdin
+            .as_mut()
             .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
-        .write(full_command.as_bytes())
-        .await
+            .write(full_command.as_bytes())
+            .await
             .context("Failed to write command to nft process")?;
 
-            
-        self.stdin.as_mut()
+        self.stdin
+            .as_mut()
             .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
             .flush()
-        .await
+            .await
             .context("Failed to flush stdin")?;
 
-
-                let mut out_content  = String::new();
-let r= self.stdout_reader.as_mut()
+        let mut out_content = String::new();
+        let _r = self
+            .stdout_reader
+            .as_mut()
             .ok_or_else(|| NftError::ProcessNotAvailable("stdout not available".to_string()))?
-.read_line(&mut out_content )
-.await
-.context("Failed to read line")?;
-
-
+            .read_line(&mut out_content)
+            .await
+            .context("Failed to read line")?;
 
         Ok(out_content)
     }
-    
-    pub async fn do_input(&mut self, command: &str) -> Result<()> {
 
-let full_command = format!("{}\n", command); 
+    pub async fn do_input(&mut self, command: &str) -> Result<()> {
+        let full_command = format!("{}\n", command);
 
         // 发送命令
-        let b = self.stdin.as_mut()
+        let _b = self
+            .stdin
+            .as_mut()
             .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
-        .write(full_command.as_bytes())
-        .await
+            .write(full_command.as_bytes())
+            .await
             .context("Failed to write command to nft process")?;
 
-            
-        self.stdin.as_mut()
+        self.stdin
+            .as_mut()
             .ok_or_else(|| NftError::ProcessNotAvailable("stdin not available".to_string()))?
             .flush()
-        .await
+            .await
             .context("Failed to flush stdin")?;
-
 
         Ok(())
     }
-    
 
     /// 执行批量命令
     async fn execute_batch(&mut self, commands: &[&str]) -> Result<Vec<String>> {
         let mut results = Vec::with_capacity(commands.len());
-        
+
         for (i, command) in commands.iter().enumerate() {
             match self.execute_command(command).await {
                 Ok(output) => results.push(output),
@@ -218,7 +211,7 @@ let full_command = format!("{}\n", command);
                 }
             }
         }
-        
+
         Ok(results)
     }
 
@@ -229,7 +222,7 @@ let full_command = format!("{}\n", command);
                 warn!("NFT process exited with status: {:?}", status);
                 false
             }
-            Ok(None) => true,     // 进程仍在运行
+            Ok(None) => true, // 进程仍在运行
             Err(e) => {
                 error!("Error checking process status: {}", e);
                 false
@@ -240,14 +233,16 @@ let full_command = format!("{}\n", command);
     /// 检查进程是否应该被回收
     fn should_recycle(&self, max_age: Duration, max_commands: usize) -> bool {
         let age = Utc::now() - self.created_at;
-        // let should_recycle = age > chrono::Duration::from_std(max_age).unwrap_or_default() 
-        let should_recycle = age > max_age 
-            || self.command_count >= max_commands;
-        
+        // let should_recycle = age > chrono::Duration::from_std(max_age).unwrap_or_default()
+        let should_recycle = age > max_age || self.command_count >= max_commands;
+
         if should_recycle {
-            debug!("Process should be recycled: age={:?}, commands={}", age, self.command_count);
+            debug!(
+                "Process should be recycled: age={:?}, commands={}",
+                age, self.command_count
+            );
         }
-        
+
         should_recycle
     }
 
@@ -263,31 +258,26 @@ let full_command = format!("{}\n", command);
     }
 
     /// 优雅关闭进程
-    
-    
+
     async fn shutdown(mut self) -> Result<()> {
-        debug!("Shutting down NFT process (commands executed: {})", self.command_count);
-        
+        debug!(
+            "Shutting down NFT process (commands executed: {})",
+            self.command_count
+        );
+
         // 尝试发送退出命令
-        self.do_input("quit")
-        .await
-        .context("fail to write quit")?;
-        
+        self.do_input("quit").await.context("fail to write quit")?;
+
         // self.do_input("quit")
         // .await
         // .context("fail to write quit")?;
-        
-        // dbg!(&self.child, &self.stdin);
-        let timer = tokio::time::Instant::now();
+
+        // let timer = tokio::time::Instant::now();
         // let result = self.child.wait().await.unwrap();
         // let duration = timer.elapsed();
-        // dbg!(&duration);
-        // dbg!(&result);
-                // 等待进程结束，设置超时
-        let wait_result = timeout(
-            TokioDuration::from_secs(5),
-            self.child.wait()
-        ).await;
+
+        // 等待进程结束，设置超时
+        let wait_result = timeout(TokioDuration::from_secs(5), self.child.wait()).await;
 
         match wait_result {
             Ok(Ok(status)) => {
@@ -298,8 +288,7 @@ let full_command = format!("{}\n", command);
             }
             Err(e) => {
                 debug!("NFT process shutdown timeout, forcing kill, detail: {}", e);
-                self.child.kill().await;
-
+                self.child.kill().await?;
             }
         }
 
@@ -315,7 +304,6 @@ struct ProcessStats {
     age: chrono::Duration,
     is_busy: bool,
 }
-
 
 // NFT 执行器池
 #[derive(Debug)]
@@ -371,7 +359,6 @@ impl NftExecutor {
         // 将进程返回池中或销毁
         self.return_or_destroy_process(process).await;
 
-
         result
     }
     /// execute command without output  
@@ -396,7 +383,6 @@ impl NftExecutor {
 
         // 将进程返回池中或销毁
         self.return_or_destroy_process(process).await;
-
 
         result
     }
@@ -508,30 +494,30 @@ impl NftExecutor {
 }
 
 pub async fn check_nftables_available() -> Result<bool> {
-        match Command::new("nft")
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-        {
-            Ok(status) => {
-                if status.success() {
-                    // 检查是否有权限
-                    match Command::new("nft")
-                        .args(&["list", "tables"])
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .status()
-                        .await
-                    {
-                        Ok(status) => Ok(status.success()),
-                        Err(_) => Ok(false),
-                    }
-                } else {
-                    Ok(false)
+    match Command::new("nft")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+    {
+        Ok(status) => {
+            if status.success() {
+                // 检查是否有权限
+                match Command::new("nft")
+                    .args(&["list", "tables"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await
+                {
+                    Ok(status) => Ok(status.success()),
+                    Err(_) => Ok(false),
                 }
+            } else {
+                Ok(false)
             }
-            Err(_) => Ok(false),
         }
+        Err(_) => Ok(false),
     }
+}

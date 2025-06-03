@@ -33,24 +33,25 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Config::from_file(&args.config)?;
     let nft_available = crate::nft::check_nftables_available().await?;
 
-        // 创建执行器池
-        let max_pool_size = cfg.executor_pool_size.unwrap_or(5);
-        let max_process_age = cfg.executor_max_age_secs.unwrap_or(300);
-        let max_commands_per_process = cfg.executor_max_commands.unwrap_or(100);
+    // 创建执行器池
+    let max_pool_size = cfg.executor_pool_size.unwrap_or(5);
+    let max_process_age = cfg.executor_max_age_secs.unwrap_or(300);
+    let max_commands_per_process = cfg.executor_max_commands.unwrap_or(100);
 
-        let executor = Arc::new(
-            nft::NftExecutor::new(
-                max_pool_size,
-                max_process_age,
-                max_commands_per_process,
-                !nft_available,
-            )
-            .await,
-        );
-        
-            
+    let executor = Arc::new(
+        nft::NftExecutor::new(
+            max_pool_size,
+            max_process_age,
+            max_commands_per_process,
+            !nft_available,
+        )
+        .await,
+    );
+
     // 启动防火墙控制器
-    let fw = Arc::new(RwLock::new(controller::Firewall::new(&cfg, Arc::clone(&executor)).await?));
+    let fw = Arc::new(RwLock::new(
+        controller::Firewall::new(&cfg, Arc::clone(&executor)).await?,
+    ));
     // 启动流量监控与规则引擎
     monitor::run(cfg, &fw, executor).await?;
     // 等待终止信号（Ctrl+C）

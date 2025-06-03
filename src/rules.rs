@@ -1,8 +1,11 @@
-use crate::{config::{Rule, HookType}, controller::Firewall};
+use crate::{
+    config::{HookType, Rule},
+    controller::Firewall,
+};
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use log::{debug, info};
+use log::debug;
 use std::{net::IpAddr, sync::Arc, time::Instant};
 
 /// 流量统计结构体
@@ -37,6 +40,7 @@ struct Window {
 pub struct RuleEngine {
     rules: Vec<Rule>,
     stats: Arc<DashMap<IpAddr, TrafficStats>>,
+    handles: DashMap<IpAddr, Vec<String>>,
     windows: DashMap<IpAddr, Window>,
 }
 
@@ -46,6 +50,8 @@ impl RuleEngine {
         RuleEngine {
             rules,
             stats,
+
+            handles: DashMap::new(),
             windows: DashMap::new(),
         }
     }
@@ -57,10 +63,9 @@ impl RuleEngine {
         for entry in self.stats.iter() {
             let ip = *entry.key();
 
-
-            let bps =  match fw.hook {
-            HookType::Input => entry.value().rx_bytes,
-            HookType::Output => entry.value().tx_bytes,
+            let bps = match fw.hook {
+                HookType::Input => entry.value().rx_bytes,
+                HookType::Output => entry.value().tx_bytes,
             };
             // 获取或创建滑动窗口
             let mut win = self.windows.entry(ip).or_insert_with(|| Window {
@@ -102,13 +107,45 @@ impl RuleEngine {
                         crate::config::Action::Ban { seconds } => {
                             debug!("intend to ban  {} for {} seconds", ip, seconds);
 
-                            fw.ban(ip, seconds).await?;
+                            let rule_id = fw.ban(ip, seconds).await?;
+                            self.handles
+                                .entry(ip)
+                                .and_modify(|vec| vec.push(rule_id.clone()))
+                                .or_insert_with(|| vec![rule_id]);
+                        }
+                    }
+                }
 
+                self.clean_expiration_rules(rule, ip, fw).await?;
+            }
+        }
+        Ok(())
+    }
+
+    // clean expiration rules
+    async fn clean_expiration_rules(
+        &self,
+        rule: &Rule,
+        ip: IpAddr,
+        fw: &mut Firewall,
+    ) -> anyhow::Result<()> {
+        if let Some(ids) = self.handles.get(&ip) {
+            for id in ids.clone() {
+                match rule.action {
+                    crate::config::Action::RateLimit { kbps, burst } => {
+                        debug!("intend to unlimit the speed of {} to {}kbps", ip, kbps);
+                        // fw.limit(ip, kbps, burst).await?;
+                    }
+                    crate::config::Action::Ban { seconds } => {
+                        if fw.is_expiration(&id, seconds).await {
+                            debug!("intend to unban  {} because of expiration ", ip);
+                            fw.unban(&id).await?;
                         }
                     }
                 }
             }
         }
+
         Ok(())
     }
 }

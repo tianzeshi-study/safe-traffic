@@ -1,19 +1,19 @@
 use serde::Deserialize;
-use std::{collections::HashSet, fs, net::IpAddr, path::Path, fmt};
+use std::{collections::HashSet, fmt, fs, net::IpAddr, path::Path};
 
-/// hook type , input or output 
+/// hook type , input or output
 #[derive(Deserialize, Debug, Clone)]
-pub enum  HookType {
+pub enum HookType {
     Input,
     Output,
 }
 
 /// family type , ipV4 ,  ipV6  or both(inet)
 #[derive(Deserialize, Debug, Clone)]
-pub enum  FamilyType {
+pub enum FamilyType {
     Ip4,
     Ip6,
-    Inet
+    Inet,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -30,12 +30,12 @@ impl fmt::Display for PolicyType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // match 出对应的 nft 关键字
         let s: &str = match self {
-            PolicyType::Accept   => "accept",
-            PolicyType::Drop     => "drop",
-            PolicyType::Reject   => "reject",
+            PolicyType::Accept => "accept",
+            PolicyType::Drop => "drop",
+            PolicyType::Reject => "reject",
             PolicyType::Continue => "continue",
-            PolicyType::Log      => "log",
-            PolicyType::Count    => "count",
+            PolicyType::Log => "log",
+            PolicyType::Count => "count",
         };
         write!(f, "{}", s)
     }
@@ -43,11 +43,11 @@ impl fmt::Display for PolicyType {
 
 impl fmt::Display for HookType {
     /// fmt 方法中返回 fmt::Result，
-/// 方便链式调用 write! 等宏
+    /// 方便链式调用 write! 等宏
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 先 match 出对应的字符串 slice
         let s: &str = match self {
-            HookType::Input  => "input",
+            HookType::Input => "input",
             HookType::Output => "output",
         };
         // 将字符串写入 f
@@ -58,15 +58,13 @@ impl fmt::Display for HookType {
 impl fmt::Display for FamilyType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s: &str = match self {
-            FamilyType::Ip4  => "ip4",
-            FamilyType::Ip6  => "ip6",
+            FamilyType::Ip4 => "ip4",
+            FamilyType::Ip6 => "ip6",
             FamilyType::Inet => "inet",
         };
         write!(f, "{}", s)
     }
 }
-
-
 
 /// 单条规则动作类型：限速或封禁
 #[derive(Deserialize, Debug, Clone)]
@@ -113,14 +111,13 @@ pub struct Config {
     /// 规则列表
     pub rules: Vec<Rule>,
     /// 日志保留路径
-    pub log_path: Option<String>,
+    pub log_dir_path: Option<String>,
     pub monitor_interval: Option<u64>, // 监控间隔（秒）
     pub rule_check_interval: Option<u64>,
     pub executor_pool_size: Option<usize>,    // 默认 5
     pub executor_max_age_secs: Option<i64>,   // 默认 300 秒
     pub executor_max_commands: Option<usize>, // 默认 100 条命令
 }
-
 
 impl Config {
     /// 从文件加载配置
@@ -133,9 +130,6 @@ impl Config {
         Ok(cfg)
     }
 }
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -191,7 +185,7 @@ mod tests {
             chain_name = "chain"
             family = "ipv4"
             interface = "eth0"
-            log_path = "/var/log/app.log"
+            log_dir_path = "/var/log/safe-server-traffic"
 
             [[rules]]
             window_secs = 10

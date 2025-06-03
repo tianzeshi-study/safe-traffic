@@ -1,14 +1,14 @@
 use crate::{
     config::Config,
     controller::Firewall,
+    nft::NftExecutor,
     rules::{RuleEngine, TrafficStats},
-    nft::NftExecutor
 };
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
 use log::{debug, error, info};
 use rtnetlink::{new_connection, Handle};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -156,7 +156,9 @@ impl TrafficMonitor {
     }
 
     /// 通过 nftables JSON 格式获取流量统计
-    async fn get_traffic_via_nftables_json(&self) -> anyhow::Result<HashMap<IpAddr, IpTrafficStats>> {
+    async fn get_traffic_via_nftables_json(
+        &self,
+    ) -> anyhow::Result<HashMap<IpAddr, IpTrafficStats>> {
         let mut ip_stats = HashMap::new();
 
         // 确保规则存在
@@ -165,12 +167,14 @@ impl TrafficMonitor {
         // 获取输入链的流量统计 (JSON 格式)
         let input_cmd = "list chain inet traffic_monitor input_stats";
         let input_output = self.executor.execute(input_cmd).await?;
-        self.parse_nft_json_output(&input_output, &mut ip_stats, "input").await?;
+        self.parse_nft_json_output(&input_output, &mut ip_stats, "input")
+            .await?;
 
-        // 获取输出链的流量统计 (JSON 格式) 
+        // 获取输出链的流量统计 (JSON 格式)
         let output_cmd = "list chain inet traffic_monitor output_stats";
         let output_output = self.executor.execute(output_cmd).await?;
-        self.parse_nft_json_output(&output_output, &mut ip_stats, "output").await?;
+        self.parse_nft_json_output(&output_output, &mut ip_stats, "output")
+            .await?;
 
         Ok(ip_stats)
     }
@@ -236,22 +240,23 @@ impl TrafficMonitor {
     /// 从匹配表达式中提取IP地址
     fn extract_ip_from_match(&self, match_expr: &MatchExpr, direction: &str) -> Option<IpAddr> {
         let match_obj = &match_expr.r#match;
-        
+
         // 检查是否是IP地址匹配
         if let Ok(left_str) = serde_json::to_string(&match_obj.left) {
-            let expected_field = if direction == "input" { "saddr" } else { "daddr" };
-            
+            let expected_field = if direction == "input" {
+                "saddr"
+            } else {
+                "daddr"
+            };
+
             if left_str.contains(expected_field) {
                 // 提取右侧的IP地址值
                 if let Ok(ip_str) = match_obj
-                .right
-                .as_str()
-                .ok_or("")
-                .and_then(
-                |s| 
-                s.parse::<IpAddr>()
-                .map_err(|_e| "parse error")
-                ) {
+                    .right
+                    .as_str()
+                    .ok_or("")
+                    .and_then(|s| s.parse::<IpAddr>().map_err(|_e| "parse error"))
+                {
                     return Some(ip_str);
                 }
                 // 也可能是数组格式，尝试解析
@@ -262,52 +267,60 @@ impl TrafficMonitor {
                 }
             }
         }
-        
+
         None
     }
 
     /// 确保 nftables 规则存在
     async fn ensure_nftables_rules(&self) -> anyhow::Result<()> {
         self.setup_nft_table_structure().await?;
-        
+
         let active_ips = self.get_active_ips().await?;
         for ip in active_ips {
             self.ensure_ip_counter_rules(&ip.to_string()).await?;
         }
-        
+
         Ok(())
     }
 
     /// 设置 nftables 表和链结构
     async fn setup_nft_table_structure(&self) -> anyhow::Result<()> {
         // 使用 executor 而不是直接调用 Command
-        self.executor.input("add table inet traffic_monitor").await;
-        
+        self.executor
+            .input("add table inet traffic_monitor")
+            .await?;
+
         self.executor.input(
             "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }"
-        ).await;
-        
+        ).await?;
+
         self.executor.input(
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }"
-        ).await;
+        ).await?;
 
         Ok(())
     }
 
     /// 为特定IP确保计数器规则存在
     async fn ensure_ip_counter_rules(&self, ip: &str) -> anyhow::Result<()> {
-        let ip_family =  identify_ip(ip).await?;
+        let ip_family = identify_ip(ip).await?;
         // 检查现有规则
         let check_cmd = "list chain inet traffic_monitor input_stats";
         let existing_rules = self.executor.execute(check_cmd).await.unwrap_or_default();
-        
+
         if !existing_rules.contains(&format!("\"{}\"", ip)) {
             // 添加输入流量计数规则
-            let input_rule = format!("add rule inet traffic_monitor input_stats {} saddr {} counter accept",ip_family,  ip);
+            let input_rule = format!(
+                "add rule inet traffic_monitor input_stats {} saddr {} counter accept",
+                ip_family, ip
+            );
             let _ = self.executor.input(&input_rule).await;
-            
+
             // 添加输出流量计数规则
-            let output_rule = format!("add rule inet traffic_monitor output_stats {} daddr {} counter accept", ip_family, ip);
+            let output_rule = format!(
+                "add rule inet traffic_monitor output_stats {} daddr {} counter accept",
+                ip_family, ip
+            );
             let _ = self.executor.input(&output_rule).await;
         }
 
@@ -503,23 +516,31 @@ impl TrafficMonitor {
 
     /// 清理 nftables 规则
     pub async fn cleanup_nftables_rules(&self) -> anyhow::Result<()> {
-        let _ = self.executor.execute("delete table inet traffic_monitor").await;
+        let _ = self
+            .executor
+            .execute("delete table inet traffic_monitor")
+            .await;
         Ok(())
     }
 }
 
-async fn identify_ip(ip_str: &str)  -> anyhow::Result<&str> {
+async fn identify_ip(ip_str: &str) -> anyhow::Result<&str> {
     match ip_str.parse::<IpAddr>() {
         Ok(IpAddr::V4(_)) => Ok("ip"),
         Ok(IpAddr::V6(_)) => Ok("ip6"),
-        Err(e) => {error!("{} 不是合法的 IP 地址: {}", ip_str, e);
-    Err(e.into())
-    },
+        Err(e) => {
+            error!("{} 不是合法的 IP 地址: {}", ip_str, e);
+            Err(e.into())
+        }
     }
 }
 
 /// 运行主监控逻辑
-pub async fn run(cfg: Config, fw: &Arc<RwLock<Firewall>>, executor: Arc<NftExecutor>) -> anyhow::Result<()> {
+pub async fn run(
+    cfg: Config,
+    fw: &Arc<RwLock<Firewall>>,
+    executor: Arc<NftExecutor>,
+) -> anyhow::Result<()> {
     let stats = Arc::new(DashMap::<IpAddr, TrafficStats>::new());
     let engine = RuleEngine::new(cfg.rules.clone(), stats.clone());
 

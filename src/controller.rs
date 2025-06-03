@@ -1,16 +1,14 @@
 use crate::{
-    config::{FamilyType, HookType, PolicyType, Action, Config},
+    config::{Action, Config, FamilyType, HookType, PolicyType},
     nft::NftExecutor,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::process::Stdio;
 use std::sync::Arc;
 
-use tokio::process::Command;
 use tokio::sync::RwLock;
 
 /// 防火墙规则信息
@@ -39,18 +37,22 @@ pub struct Firewall {
 
 impl Firewall {
     /// 初始化防火墙控制器
-    pub async fn new(cfg: &Config, executor:Arc<NftExecutor>) -> Result<Self> {
-
+    pub async fn new(cfg: &Config, executor: Arc<NftExecutor>) -> Result<Self> {
         let family = cfg.family.clone().unwrap_or(FamilyType::Inet);
-        let table_name = cfg.table_name.clone().unwrap_or("traffic_filter".to_string());
-        let chain_name = cfg.chain_name.clone().unwrap_or("traffic_input".to_string());
+        let table_name = cfg
+            .table_name
+            .clone()
+            .unwrap_or("traffic_filter".to_string());
+        let chain_name = cfg
+            .chain_name
+            .clone()
+            .unwrap_or("traffic_input".to_string());
         let hook = cfg.hook.clone().unwrap_or(HookType::Input);
         let priority = cfg.priority.clone().unwrap_or(0);
         let policy = cfg.policy.clone().unwrap_or(PolicyType::Accept);
 
         // 检查 nftables 是否可用
         let nft_available = crate::nft::check_nftables_available().await?;
-        
 
         let firewall = Firewall {
             family,
@@ -67,7 +69,6 @@ impl Firewall {
         if nft_available {
             // 初始化表和链
             firewall.init_table_and_chain().await?;
-            
         } else {
             warn!("nftables is unavailable, using mock mode instead");
         }
@@ -83,10 +84,14 @@ impl Firewall {
             format!("add table {} {}", self.family, self.table_name),
             format!(
                 "add chain {} {} {} {{ type filter hook {} priority {}  ; policy {} ; }}",
-                self.family, self.table_name, self.chain_name, self.hook, self.priority, self.policy
+                self.family,
+                self.table_name,
+                self.chain_name,
+                self.hook,
+                self.priority,
+                self.policy
             ),
         ];
-
 
         self.executor.input(&commands[0]).await?;
         self.executor.input(&commands[1]).await?;
@@ -99,14 +104,13 @@ impl Firewall {
         Ok(())
     }
 
-
     /// 对指定 IP 设置速率限制
     pub async fn limit(&self, ip: IpAddr, kbps: u64, burst: Option<u64>) -> Result<String> {
         let rule_id = format!("limit_{}_{}", ip, kbps);
-        let burst  = if let Some(bur) = burst {
+        let burst = if let Some(bur) = burst {
             bur
-        }else  { 
-        kbps.min(1024) / 10
+        } else {
+            kbps.min(1024) / 10
         };
 
         // 检查是否已存在相同规则
@@ -131,7 +135,10 @@ impl Firewall {
         let rule = FirewallRule {
             id: rule_id.clone(),
             ip,
-            rule_type: Action::RateLimit { kbps, burst: Some(burst) },
+            rule_type: Action::RateLimit {
+                kbps,
+                burst: Some(burst),
+            },
             created_at: Utc::now(),
             handle: Some(handle),
         };
@@ -165,7 +172,6 @@ impl Firewall {
 
     /// 对指定 IP 封禁指定时长
     pub async fn ban(&self, ip: IpAddr, seconds: u64) -> Result<String> {
-        // pub async fn ban(&self, ip: IpAddr) -> Result<String> {
         let duration = Duration::seconds(seconds as i64);
         let until = Utc::now() + duration;
         let rule_id = format!("ban_{}_{}", ip, until.timestamp());
@@ -218,48 +224,51 @@ impl Firewall {
             self.family, self.table_name, self.chain_name, ip_version, ip
         );
 
-        self.executor.input(&rule_cmd).await?;
+        let output_with_handle = self.executor.execute(&rule_cmd).await?;
+        dbg!(&output_with_handle);
 
         // 返回规则标识符
         Ok(format!("ban_{}_{}", ip, Utc::now().timestamp()))
     }
 
+    pub async fn is_expiration(&self, rule_id: &str, seconds: u64) -> bool {
+        let duration = Duration::seconds(seconds as i64);
+        let now = Utc::now();
+        let rules = self.rules.read().await;
+        if let Some(rule) = rules.get(rule_id) {
+            // for (_, rule) in rules.iter() {
+            // if rule.ip == ip {
+            let expiration = rule.created_at + duration;
+
+            now > expiration
+        } else {
+            false
+        }
+        // }
+    }
+
     /// 解封指定IP
-    pub async fn unban(&self, ip: IpAddr) -> Result<Vec<String>> {
-        let mut removed_rules = Vec::new();
-        let mut rules_to_remove = Vec::new();
+    pub async fn unban(&self, id: &str) -> Result<()> {
+        self.remove_rule_by_id(&id).await?;
+        if let Some(r) = self.rules.write().await.remove(id) {
+            info!("Unblocked successful, remove rule: {}", id);
+        } else {
+            warn!("fail to remove rule, maybe not exist: {}", id);
+            return Err(anyhow!("fail to remove rule, maybe not exist: {}", id));
+        };
 
-        // 查找需要移除的规则
-        {
-            let rules = self.rules.read().await;
-            for (rule_id, rule) in rules.iter() {
-                if rule.ip == ip {
-                    if let Action::Ban { .. } = rule.rule_type {
-                        rules_to_remove.push((rule_id.clone(), rule.handle.clone()));
-                    }
-                }
-            }
-        }
-
-        // 移除规则
-        for (rule_id, handle) in rules_to_remove {
-            if let Some(handle) = handle {
-                self.remove_rule_by_handle(&handle).await?;
-            }
-            self.rules.write().await.remove(&rule_id);
-            removed_rules.push(rule_id);
-        }
-
-        if !removed_rules.is_empty() {
-            info!("Unblocked IP: {}", ip);
-        }
-
-        Ok(removed_rules)
+        Ok(())
     }
 
     /// 根据句柄移除规则
-    async fn remove_rule_by_handle(&self, _handle: &str) -> Result<()> {
-        debug!("Removing rule: {}", _handle);
+    async fn remove_rule_by_id(&self, id: &str) -> Result<()> {
+        debug!("Removing rule: {}", id);
+        let handle = if let Some(rule) = self.rules.read().await.get(id) {
+            rule.handle.clone()
+        } else {
+            return Err(anyhow!("fail to get rule by id: {}", id));
+        };
+        // self.rules.remove(handle)?;
         // 实际实现中，你可能需要更复杂的规则删除逻辑
         Ok(())
     }
@@ -287,7 +296,7 @@ impl Firewall {
         // 移除过期规则
         for (rule_id, handle) in rules_to_remove {
             if let Some(handle) = handle {
-                if let Err(e) = self.remove_rule_by_handle(&handle).await {
+                if let Err(e) = self.remove_rule_by_id(&handle).await {
                     warn!("Failed to remove expired rule {}: {}", rule_id, e);
                     continue;
                 }
@@ -433,7 +442,3 @@ impl Drop for Firewall {
         });
     }
 }
-
-
-
-
