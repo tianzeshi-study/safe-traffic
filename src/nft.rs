@@ -1,16 +1,16 @@
 mod parser;
-pub use parser::{NftObject, parse_output};
 use crate::error::FirewallError;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, error, info, warn};
+pub use parser::{parse_output, NftObject};
 use std::{collections::VecDeque, fs::OpenOptions, process::Stdio, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{timeout, Duration as TokioDuration};
 
-const TIMEOUT_SEC: u64 =5; 
+const TIMEOUT_SEC: u64 = 5;
 
 #[derive(Debug)]
 struct NftProcess {
@@ -118,7 +118,7 @@ impl NftProcess {
 
         // 设置命令执行超时
         let result = timeout(
-            TokioDuration::from_secs(10),
+            TokioDuration::from_secs(TIMEOUT_SEC),
             self.do_execute_internal(command),
         )
         .await;

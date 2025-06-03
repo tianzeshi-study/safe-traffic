@@ -1,4 +1,4 @@
-use  serde::Deserialize;
+use serde::Deserialize;
 
 /// NFT JSON 输出结构体
 #[derive(Debug, Deserialize)]
@@ -32,13 +32,11 @@ struct RuleObject {
     rule: Rule,
 }
 
-impl  RuleObject {
+impl RuleObject {
     async fn get_rule(&self) -> &Rule {
-        &self
-        .rule
+        &self.rule
     }
 }
-
 
 #[derive(Debug, Deserialize)]
 struct Rule {
@@ -49,7 +47,7 @@ struct Rule {
     expr: Option<Vec<Expression>>,
 }
 
-impl  Rule {
+impl Rule {
     pub async fn get_handle(&self) -> Option<u64> {
         self.handle
     }
@@ -60,21 +58,14 @@ pub struct AddObject {
     add: RuleObject,
 }
 
-impl  AddObject {
+impl AddObject {
     pub async fn get_add(&self) -> &RuleObject {
         &self.add
     }
     pub async fn get_handle(&self) -> Option<u64> {
-        self
-        .get_add()
-        .await
-        .get_rule()
-        .await
-        .get_handle()
-        .await
+        self.get_add().await.get_rule().await.get_handle().await
     }
 }
-
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -113,15 +104,12 @@ struct AcceptExpr {
     accept: Option<serde_json::Value>,
 }
 
-
-
 pub async fn parse_output(json_output: &str) -> anyhow::Result<Vec<NftObject>> {
-        let nft_data: NftJsonOutput = serde_json::from_str(json_output)
-            .map_err(|e| anyhow::anyhow!("parser error  : {}, \n fail to parse {}", e, json_output))?;
+    let nft_data: NftJsonOutput = serde_json::from_str(json_output)
+        .map_err(|e| anyhow::anyhow!("parser error  : {}, \n fail to parse {}", e, json_output))?;
 
     Ok(nft_data.nftables)
 }
-    
 
 /*
 async fn parse_nft_json_output(

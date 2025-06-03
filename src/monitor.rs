@@ -1,12 +1,12 @@
 use crate::{
     config::Config,
     controller::Firewall,
-    nft::{NftExecutor,NftError},
+    nft::{NftError, NftExecutor},
     rules::{RuleEngine, TrafficStats},
 };
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
-use log::{debug, error, info,warn};
+use log::{debug, error, info, warn};
 use rtnetlink::{new_connection, Handle};
 use serde::Deserialize;
 use std::{
@@ -187,7 +187,6 @@ impl TrafficMonitor {
         ip_stats: &mut HashMap<IpAddr, IpTrafficStats>,
         direction: &str,
     ) -> anyhow::Result<()> {
-
         let nft_data: NftJsonOutput = serde_json::from_str(json_output)
             .map_err(|e| anyhow::anyhow!("解析 NFT JSON 失败: {}", e))?;
 
@@ -287,10 +286,7 @@ impl TrafficMonitor {
 
     /// 设置 nftables 表和链结构
     async fn setup_nft_table_structure(&self) -> anyhow::Result<()> {
-
-        
-
-                /*
+        /*
         self.executor
             .execute("add table inet traffic_monitor")
             .await?;
@@ -302,24 +298,21 @@ impl TrafficMonitor {
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }"
         ).await?;
             */
-            let commands = vec![
+        let commands = vec![
             "add table inet traffic_monitor".to_string(),
             "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }".to_string(),
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }".to_string()
             ];
-            match  self.executor.execute_batch(commands).await {
-            Ok(s) => {},
+        match self.executor.execute_batch(commands).await {
+            Ok(s) => {}
             Err(e) => {
                 if let Some(NftError::Timeout) = e.downcast_ref::<NftError>() {
                     warn!("timeout, maybe monitor already exist");
                     return Ok(());
                 }
-            return Err(e);
-        }
-    };
-
-
-        
+                return Err(e);
+            }
+        };
 
         Ok(())
     }

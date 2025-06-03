@@ -1,10 +1,10 @@
 use crate::{
     config::{Action, Config, FamilyType, HookType, PolicyType},
-    nft::{NftExecutor,NftError, NftObject, parse_output},
+    nft::{parse_output, NftError, NftExecutor, NftObject},
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
-use log::{debug, info, warn, error};
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -95,8 +95,8 @@ impl Firewall {
 
         // self.executor.input(&commands[0]).await?;
         // self.executor.input(&commands[1]).await?;
-        match  self.executor.execute_batch(commands).await {
-            Ok(s) => {},
+        match self.executor.execute_batch(commands).await {
+            Ok(s) => {}
             Err(e) => {
                 // 试着把 anyhow::Error 转回 NftError
                 if let Some(NftError::Timeout) = e.downcast_ref::<NftError>() {
@@ -104,10 +104,10 @@ impl Firewall {
                     // 如果想吞掉错误，返回 Ok 或继续
                     return Ok(());
                 }
-            // 其他错误按原样 return
-            return Err(e);
-        }
-    };
+                // 其他错误按原样 return
+                return Err(e);
+            }
+        };
 
         debug!(
             "Table {} and chain {} initialized",
@@ -211,17 +211,23 @@ impl Firewall {
 
         let output_with_handle = self.create_ban_rule(ip).await?;
         let nft_objs = parse_output(&output_with_handle).await?;
-        
-        let nft_obj = nft_objs.get(0)
-        .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
+
+        let nft_obj = nft_objs
+            .get(0)
+            .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
 
         let handle = match nft_obj {
-            NftObject::Add(obj) => obj.get_handle()
-            .await
-            .ok_or_else(|| anyhow!("fail to get "))?
-            .to_string(),
-            NftObject::Other(other) => {return Err(anyhow!("parse output error: {:?}", other));},
-            _ => {return Err(anyhow!("parse output error: {:?}", nft_obj));},
+            NftObject::Add(obj) => obj
+                .get_handle()
+                .await
+                .ok_or_else(|| anyhow!("fail to get "))?
+                .to_string(),
+            NftObject::Other(other) => {
+                return Err(anyhow!("parse output error: {:?}", other));
+            }
+            _ => {
+                return Err(anyhow!("parse output error: {:?}", nft_obj));
+            }
         };
 
         let rule = FirewallRule {
@@ -252,7 +258,6 @@ impl Firewall {
 
         let output_with_handle = self.executor.execute(&rule_cmd).await?;
 
-
         // 返回规则标识符
         // Ok(format!("ban_{}_{}", ip, Utc::now().timestamp()))
         // Ok((format!("ban_{}_{}", ip, Utc::now().timestamp()), output_with_handle)
@@ -277,27 +282,48 @@ impl Firewall {
 
     /// 解封指定IP
     pub async fn unban(&self, id: &str) -> Result<()> {
-        self.remove_rule_by_id(&id).await?;
-        if let Some(r) = self.rules.write().await.remove(id) {
+        debug!("get RwLock to remove rule : {}", id);
+
+        let handle = {
+            let rules = self.rules.read().await;
+            let rule = rules
+                .get(id)
+                .ok_or_else(|| anyhow!("fail to get rule by id: {}", id))?;
+            rule.handle
+                .clone()
+                .ok_or_else(|| anyhow!("rule has no handle: {}", id))?
+        };
+
+        let unban_result = self.remove_rule_by_handle(&handle).await?;
+
+        let removed = {
+            let mut rules = self.rules.write().await;
+            rules.remove(id)
+        };
+
+        if let Some(_) = removed {
             info!("Unblocked successful, remove rule: {}", id);
         } else {
             warn!("fail to remove rule, maybe not exist: {}", id);
             return Err(anyhow!("fail to remove rule, maybe not exist: {}", id));
-        };
+        }
 
         Ok(())
     }
 
     /// 根据句柄移除规则
-    async fn remove_rule_by_id(&self, id: &str) -> Result<()> {
-        debug!("Removing rule: {}", id);
-        let handle = if let Some(rule) = self.rules.read().await.get(id) {
-            rule.handle.clone()
-        } else {
-            return Err(anyhow!("fail to get rule by id: {}", id));
-        };
-        // self.rules.remove(handle)?;
-        // 实际实现中，你可能需要更复杂的规则删除逻辑
+    async fn remove_rule_by_handle(&self, handle: &str) -> Result<()> {
+        debug!("Removing rule by handle: {}", handle);
+
+        let remove_command = format!(
+            "delete rule {} {} {} handle {}",
+            self.family, self.table_name, self.chain_name, handle
+        );
+
+        let unban_output = self.executor.input(&remove_command).await?;
+
+        debug!("execute command to delete nft rule: {}", &remove_command);
+
         Ok(())
     }
 
@@ -324,7 +350,7 @@ impl Firewall {
         // 移除过期规则
         for (rule_id, handle) in rules_to_remove {
             if let Some(handle) = handle {
-                if let Err(e) = self.remove_rule_by_id(&handle).await {
+                if let Err(e) = self.remove_rule_by_handle(&handle).await {
                     warn!("Failed to remove expired rule {}: {}", rule_id, e);
                     continue;
                 }
