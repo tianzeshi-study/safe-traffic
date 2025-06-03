@@ -8,6 +8,8 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{timeout, Duration as TokioDuration};
 
+const TIMEOUT_SEC: u64 =5; 
+
 #[derive(Debug)]
 struct NftProcess {
     child: Child,
@@ -21,7 +23,7 @@ struct NftProcess {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum NftError {
+pub enum NftError {
     #[error("Process not available: {0}")]
     ProcessNotAvailable(String),
     #[error("Command execution failed: {0}")]
@@ -77,7 +79,7 @@ impl NftProcess {
     async fn wait_for_ready(&mut self) -> Result<()> {
         // 发送一个简单的命令来测试进程是否准备就绪
         let test_result = timeout(
-            TokioDuration::from_secs(10),
+            TokioDuration::from_secs(TIMEOUT_SEC),
             self.do_execute_internal("list tables"),
         )
         .await;
@@ -277,7 +279,7 @@ impl NftProcess {
         // let duration = timer.elapsed();
 
         // 等待进程结束，设置超时
-        let wait_result = timeout(TokioDuration::from_secs(5), self.child.wait()).await;
+        let wait_result = timeout(TokioDuration::from_secs(TIMEOUT_SEC), self.child.wait()).await;
 
         match wait_result {
             Ok(Ok(status)) => {

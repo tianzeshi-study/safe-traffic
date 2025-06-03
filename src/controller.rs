@@ -1,10 +1,10 @@
 use crate::{
     config::{Action, Config, FamilyType, HookType, PolicyType},
-    nft::NftExecutor,
+    nft::{NftExecutor,NftError},
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -93,9 +93,21 @@ impl Firewall {
             ),
         ];
 
-        self.executor.input(&commands[0]).await?;
-        self.executor.input(&commands[1]).await?;
-        // let _results = self.executor.execute_batch(commands).await?;
+        // self.executor.input(&commands[0]).await?;
+        // self.executor.input(&commands[1]).await?;
+        match  self.executor.execute_batch(commands).await {
+            Ok(s) => {dbg!(&s);},
+            Err(e) => {
+                // 试着把 anyhow::Error 转回 NftError
+                if let Some(NftError::Timeout) = e.downcast_ref::<NftError>() {
+                    warn!("timeout, maybe controller already exist");
+                    // 如果想吞掉错误，返回 Ok 或继续
+                    return Ok(());
+                }
+            // 其他错误按原样 return
+            return Err(e);
+        }
+    };
 
         debug!(
             "Table {} and chain {} initialized",

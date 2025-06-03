@@ -1,12 +1,12 @@
 use crate::{
     config::Config,
     controller::Firewall,
-    nft::NftExecutor,
+    nft::{NftExecutor,NftError},
     rules::{RuleEngine, TrafficStats},
 };
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
-use log::{debug, error, info};
+use log::{debug, error, info,warn};
 use rtnetlink::{new_connection, Handle};
 use serde::Deserialize;
 use std::{
@@ -285,18 +285,37 @@ impl TrafficMonitor {
 
     /// 设置 nftables 表和链结构
     async fn setup_nft_table_structure(&self) -> anyhow::Result<()> {
-        // 使用 executor 而不是直接调用 Command
-        self.executor
-            .input("add table inet traffic_monitor")
-            .await?;
 
+        
+/*
         self.executor.input(
             "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }"
         ).await?;
-
-        self.executor.input(
+        
+        self.executor
+            .input("add table inet traffic_monitor")
+            .await?;
+            self.executor.input(
             "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }"
         ).await?;
+            */
+            let commands = vec![
+            "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }".to_string(),
+            "add table inet traffic_monitor".to_string(),
+            "add chain inet traffic_monitor output_stats { type filter hook output priority -100; policy accept; }".to_string()
+            ];
+            match  self.executor.execute_batch(commands).await {
+            Ok(s) => {},
+            Err(e) => {
+                if let Some(NftError::Timeout) = e.downcast_ref::<NftError>() {
+                    warn!("timeout, maybe monitor already exist");
+                    return Ok(());
+                }
+            return Err(e);
+        }
+    };
+
+        
 
         Ok(())
     }
@@ -314,14 +333,14 @@ impl TrafficMonitor {
                 "add rule inet traffic_monitor input_stats {} saddr {} counter accept",
                 ip_family, ip
             );
-            let _ = self.executor.input(&input_rule).await;
+            let _ = self.executor.execute(&input_rule).await;
 
             // 添加输出流量计数规则
             let output_rule = format!(
                 "add rule inet traffic_monitor output_stats {} daddr {} counter accept",
                 ip_family, ip
             );
-            let _ = self.executor.input(&output_rule).await;
+            let _ = self.executor.execute(&output_rule).await;
         }
 
         Ok(())
