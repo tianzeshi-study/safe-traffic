@@ -1,21 +1,18 @@
 use crate::{
     config::Config,
     controller::Firewall,
-    nft::{parser::*, NftError, NftExecutor},
+    nft::NftExecutor,
     rules::{RuleEngine, TrafficStats},
     monitor::TrafficMonitor,
 };
 use dashmap::DashMap;
-use futures::stream::TryStreamExt;
-use log::{debug, error, info, warn};
-use rtnetlink::{new_connection, Handle};
+use log::info;
+use rtnetlink::new_connection;
 use std::{
-    collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::IpAddr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
-use tokio::{sync::RwLock, time};
 
 /// 运行主监控逻辑
 pub async fn run(

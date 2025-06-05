@@ -13,7 +13,6 @@ use env_logger::Env;
 use log::info;
 use std::sync::Arc;
 use tokio::signal;
-use tokio::sync::RwLock;
 
 #[derive(Parser)]
 #[command(author, version, about = "Safe Server Traffic 自动限流与封禁工具")]

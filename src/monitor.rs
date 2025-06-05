@@ -1,20 +1,18 @@
 use crate::{
-    config::Config,
-    controller::Firewall,
     nft::{parser::*, NftError, NftExecutor},
-    rules::{RuleEngine, TrafficStats},
+    rules::TrafficStats,
 };
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
-use log::{debug, error, info, warn};
-use rtnetlink::{new_connection, Handle};
+use log::{debug, error, warn};
+use rtnetlink::Handle;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::RwLock, time};
+use tokio::time;
 
 /// 每个IP的详细流量统计
 #[derive(Debug, Clone)]
