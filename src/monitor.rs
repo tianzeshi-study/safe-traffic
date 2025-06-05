@@ -263,7 +263,7 @@ impl TrafficMonitor {
 
         // 从现有统计中获取
         // for entry in self.stats.iter() {
-            // ips.push(*entry.key());
+        // ips.push(*entry.key());
         // }
 
         // 从当前连接中获取
@@ -424,6 +424,8 @@ impl TrafficMonitor {
             // 更新统计
             stats.rx_bytes = new_stats.rx_bytes;
             stats.tx_bytes = new_stats.tx_bytes;
+            stats.rx_delta = rx_delta;
+            stats.tx_delta = tx_delta;
             stats.last_updated = Instant::now();
 
             if rx_delta > 0 || tx_delta > 0 {

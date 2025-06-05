@@ -49,9 +49,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // 启动防火墙控制器
-    let fw = Arc::new(
-        controller::Firewall::new(&cfg, Arc::clone(&executor)).await?,
-    );
+    let fw = Arc::new(controller::Firewall::new(&cfg, Arc::clone(&executor)).await?);
     // 启动流量监控与规则引擎
     monitor::run(cfg, fw.clone(), executor).await?;
     // 等待终止信号（Ctrl+C）
