@@ -1,25 +1,17 @@
 use crate::{
     config::Config,
     controller::Firewall,
+    monitor::TrafficMonitor,
     nft::NftExecutor,
     rules::{RuleEngine, TrafficStats},
-    monitor::TrafficMonitor,
 };
 use dashmap::DashMap;
 use log::info;
 use rtnetlink::new_connection;
-use std::{
-    net::IpAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 /// 运行主监控逻辑
-pub async fn run(
-    cfg: Config,
-    fw: Arc<Firewall>,
-    executor: Arc<NftExecutor>,
-) -> anyhow::Result<()> {
+pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> anyhow::Result<()> {
     let stats = Arc::new(DashMap::<IpAddr, TrafficStats>::new());
     let engine = RuleEngine::new(cfg.rules.clone(), stats.clone());
 
@@ -40,9 +32,11 @@ pub async fn run(
     );
 
     let monitor_task = monitor.start();
-    let engine_task =         engine.start(fw,        Duration::from_secs(cfg.rule_check_interval.unwrap_or(1)),   );
+    let engine_task = engine.start(
+        fw,
+        Duration::from_secs(cfg.rule_check_interval.unwrap_or(1)),
+    );
 
     tokio::try_join!(monitor_task, engine_task)?;
     Ok(())
 }
-

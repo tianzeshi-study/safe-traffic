@@ -261,12 +261,12 @@ impl TrafficMonitor {
 
         // 从现有统计中获取
         for entry in self.stats.iter() {
-        ips.push(*entry.key());
+            ips.push(*entry.key());
         }
 
         // 从当前连接中获取
         if let Ok(connections) = self.get_active_connections().await {
-            debug!("active connections count: {}", &connections.len()); 
+            debug!("active connections count: {}", &connections.len());
             ips.extend(connections);
             debug!("active IP count: {}", ips.len());
         }
@@ -468,4 +468,3 @@ async fn identify_ip(ip_str: &str) -> anyhow::Result<&str> {
         }
     }
 }
-
