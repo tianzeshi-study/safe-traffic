@@ -202,7 +202,7 @@ impl TrafficMonitor {
         // self.setup_nft_table_structure().await?;
 
         let active_ips = self.get_active_ips().await?;
-        dbg!(&active_ips.len());
+
         for ip in active_ips {
             self.ensure_ip_counter_rules(&ip.to_string()).await?;
         }
@@ -262,14 +262,15 @@ impl TrafficMonitor {
         let mut ips = Vec::new();
 
         // 从现有统计中获取
-        // for entry in self.stats.iter() {
-        // ips.push(*entry.key());
-        // }
+        for entry in self.stats.iter() {
+        ips.push(*entry.key());
+        }
 
         // 从当前连接中获取
         if let Ok(connections) = self.get_active_connections().await {
-            dbg!(&connections.len());
+            debug!("active connections count: {}", &connections.len()); 
             ips.extend(connections);
+            debug!("active IP count: {}", ips.len());
         }
 
         // 去重并排序
@@ -418,7 +419,7 @@ impl TrafficMonitor {
 
             // 计算增量
             let rx_delta = new_stats.rx_bytes.saturating_sub(stats.rx_bytes);
-            dbg!(&new_stats.rx_bytes, &stats.rx_bytes, &rx_delta);
+
             let tx_delta = new_stats.tx_bytes.saturating_sub(stats.tx_bytes);
 
             // 更新统计
@@ -470,61 +471,3 @@ async fn identify_ip(ip_str: &str) -> anyhow::Result<&str> {
     }
 }
 
-/// 运行主监控逻辑
-pub async fn run(
-    cfg: Config,
-    // fw: &Arc<RwLock<Firewall>>,
-    fw: Arc<Firewall>,
-    executor: Arc<NftExecutor>,
-) -> anyhow::Result<()> {
-    let stats = Arc::new(DashMap::<IpAddr, TrafficStats>::new());
-    let engine = RuleEngine::new(cfg.rules.clone(), stats.clone());
-
-    let (connection, handle, _messages) = new_connection()?;
-    tokio::spawn(connection);
-
-    let monitor = TrafficMonitor::new(
-        handle,
-        cfg.interface.clone(),
-        stats,
-        Duration::from_secs(cfg.monitor_interval.unwrap_or(1)),
-        executor,
-    );
-
-    info!(
-        "Traffic monitoring and rules engines have been started, monitoring interface: {}",
-        cfg.interface
-    );
-
-    let monitor_task = monitor.start();
-    let engine_task = start_rule_engine(
-        engine,
-        fw,
-        Duration::from_secs(cfg.rule_check_interval.unwrap_or(1)),
-    );
-
-    tokio::try_join!(monitor_task, engine_task)?;
-    Ok(())
-}
-
-/// 启动规则引擎任务
-async fn start_rule_engine(
-    engine: RuleEngine,
-    // fw: &Arc<RwLock<Firewall>>,
-    fw: Arc<Firewall>,
-    check_interval: Duration,
-) -> anyhow::Result<()> {
-    let mut interval = time::interval(check_interval);
-
-    loop {
-        interval.tick().await;
-        // let mut fw_guard = fw.write().await;
-
-        match engine.check_and_apply(Arc::clone(&fw)).await {
-            Ok(_) => {}
-            Err(e) => error!("check and apply fail {}", e),
-        }
-        // drop(fw_guard);
-        // drop(fw);
-    }
-}

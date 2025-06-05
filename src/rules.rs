@@ -1,13 +1,14 @@
 use crate::{
     config::{HookType, Rule},
     controller::Firewall,
-};
+    };
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use futures::stream::{self, StreamExt, TryStream, TryStreamExt};
-use log::{debug, info};
-use std::{net::IpAddr, sync::Arc, time::Instant};
+use log::{debug, info,error};
+use std::{net::IpAddr, sync::Arc, time::{Duration,Instant}};
+use tokio::{sync::RwLock, time};
 
 const MAX_WINDOW_BUFFER: usize = 10;
 
@@ -129,7 +130,7 @@ impl RuleEngine {
                             .sum();
                         let avg_bps = sum / rule.window_secs;
                         // 超过阈值 => 执行动作
-                        dbg!(&ip, &avg_bps);
+                        debug!("{} average bps: {}", &ip, &avg_bps);
                         if avg_bps > rule.threshold_bps {
                             match rule.action {
                                 crate::config::Action::RateLimit { kbps, burst } => {
@@ -186,4 +187,23 @@ impl RuleEngine {
 
         Ok(())
     }
+    
+    pub async fn start(
+    &self,
+    fw: Arc<Firewall>,
+    check_interval: Duration,
+) -> anyhow::Result<()> {
+    let mut interval = time::interval(check_interval);
+
+    loop {
+        interval.tick().await;
+
+        match self.check_and_apply(Arc::clone(&fw)).await {
+            Ok(_) => {}
+            Err(e) => error!("check and apply fail {}", e),
+        }
+
+    }
+}
+
 }
