@@ -3,10 +3,13 @@ use crate::{
     controller::Firewall,
 };
 
+use futures::stream::{self, StreamExt, TryStreamExt, TryStream};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use log::debug;
+use log::{info,debug};
 use std::{net::IpAddr, sync::Arc, time::Instant};
+
+const MAX_WINDOW_BUFFER: usize = 10;
 
 /// 流量统计结构体
 #[derive(Debug, Clone)]
@@ -27,6 +30,7 @@ impl Default for TrafficStats {
 }
 
 /// 单 IP 的滑动窗口记录
+#[derive(Clone, Debug)]
 struct Window {
     /// 最近 bytes 的循环缓冲
     buffer: Vec<u64>,
@@ -57,22 +61,24 @@ impl RuleEngine {
     }
 
     /// 检查所有 IP 并在必要时调用防火墙控制
-    pub async fn check_and_apply(&self, fw: &mut Firewall) -> anyhow::Result<()> {
+    pub async fn check_and_apply(&self, fw_origin: Arc<Firewall>) -> anyhow::Result<()> {
         let now = Utc::now();
         // 遍历每个 IP 的最新流量
-        for entry in self.stats.iter() {
-            let ip = *entry.key();
-
-            let bps = match fw.hook {
+        // for entry in self.stats.iter() {
+        let entries: Vec<_> = self.stats.iter()
+    .map(|entry| {
+    let bps = match fw_origin.hook {
                 HookType::Input => entry.value().rx_bytes,
                 HookType::Output => entry.value().tx_bytes,
             };
             // 获取或创建滑动窗口
-            let mut win = self.windows.entry(ip).or_insert_with(|| Window {
-                buffer: vec![0; 60], // 最多支持 60 秒窗口
+            let mut win = self.windows.entry(*entry.key()).or_insert_with(|| Window {
+                buffer: vec![0; MAX_WINDOW_BUFFER], // 最多支持 60 秒窗口
+
                 pos: 0,
                 last_ts: now,
             });
+            
             // 如果超过 1 秒，推进循环缓冲
             if (now - win.last_ts).num_seconds() >= 1 {
                 win.pos = (win.pos + 1) % win.buffer.len();
@@ -80,6 +86,22 @@ impl RuleEngine {
                 win.buffer[pause] = bps;
                 win.last_ts = now;
             }
+            let v = win.value().clone();
+    (*entry.key(), v)
+    })
+    .collect();
+    debug!("starting checking rule: stats entries count: {}", entries.len()); 
+
+// 异步并发处理
+stream::iter(entries)
+.map(|entry| Ok::<_, anyhow::Error>(entry))
+    .try_for_each_concurrent(10, |(ip, win)| {
+        let fw = Arc::clone(&fw_origin);
+    async move {
+            // let ip = *entry.key();
+
+            
+            
             // 对每条规则进行检测
             for rule in &self.rules {
                 if rule.is_excluded(&ip) {
@@ -98,11 +120,14 @@ impl RuleEngine {
                     .sum();
                 let avg_bps = sum / rule.window_secs;
                 // 超过阈值 => 执行动作
+                    dbg!(&ip, &avg_bps);
                 if avg_bps > rule.threshold_bps {
                     match rule.action {
                         crate::config::Action::RateLimit { kbps, burst } => {
                             debug!("intend to limit the speed of {} to {}kbps", ip, kbps);
-                            fw.limit(ip, kbps, burst).await?;
+                            fw
+                            .clone()
+                            .limit(ip, kbps, burst).await?;
                         }
                         crate::config::Action::Ban { seconds } => {
                             debug!("intend to ban  {} for {} seconds", ip, seconds);
@@ -116,10 +141,13 @@ impl RuleEngine {
                     }
                 }
 
-                self.clean_expiration_rules(rule, ip, fw).await?;
+                self.clean_expiration_rules(rule, ip, Arc::clone(&fw)).await?;
             }
-        }
-        Ok(())
+            Ok(())
+    }
+        })
+        .await
+        
     }
 
     // clean expiration rules
@@ -127,7 +155,7 @@ impl RuleEngine {
         &self,
         rule: &Rule,
         ip: IpAddr,
-        fw: &mut Firewall,
+        fw: Arc<Firewall>,
     ) -> anyhow::Result<()> {
         if let Some(ids) = self.handles.get(&ip) {
             for id in ids.clone() {

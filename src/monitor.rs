@@ -202,6 +202,7 @@ impl TrafficMonitor {
         // self.setup_nft_table_structure().await?;
 
         let active_ips = self.get_active_ips().await?;
+        dbg!(&active_ips.len());
         for ip in active_ips {
             self.ensure_ip_counter_rules(&ip.to_string()).await?;
         }
@@ -261,12 +262,13 @@ impl TrafficMonitor {
         let mut ips = Vec::new();
 
         // 从现有统计中获取
-        for entry in self.stats.iter() {
-            ips.push(*entry.key());
-        }
+        // for entry in self.stats.iter() {
+            // ips.push(*entry.key());
+        // }
 
         // 从当前连接中获取
         if let Ok(connections) = self.get_active_connections().await {
+            dbg!(&connections.len());
             ips.extend(connections);
         }
 
@@ -416,6 +418,7 @@ impl TrafficMonitor {
 
             // 计算增量
             let rx_delta = new_stats.rx_bytes.saturating_sub(stats.rx_bytes);
+            dbg!(&new_stats.rx_bytes, &stats.rx_bytes, &rx_delta);
             let tx_delta = new_stats.tx_bytes.saturating_sub(stats.tx_bytes);
 
             // 更新统计
@@ -425,7 +428,7 @@ impl TrafficMonitor {
 
             if rx_delta > 0 || tx_delta > 0 {
                 debug!(
-                    "IP {} 流量更新: RX +{} bytes, TX +{} bytes",
+                    "IP {} traffic updated : RX +{} bytes, TX +{} bytes",
                     ip, rx_delta, tx_delta
                 );
             }
@@ -468,7 +471,8 @@ async fn identify_ip(ip_str: &str) -> anyhow::Result<&str> {
 /// 运行主监控逻辑
 pub async fn run(
     cfg: Config,
-    fw: &Arc<RwLock<Firewall>>,
+    // fw: &Arc<RwLock<Firewall>>,
+    fw: Arc<Firewall>,
     executor: Arc<NftExecutor>,
 ) -> anyhow::Result<()> {
     let stats = Arc::new(DashMap::<IpAddr, TrafficStats>::new());
@@ -504,19 +508,21 @@ pub async fn run(
 /// 启动规则引擎任务
 async fn start_rule_engine(
     engine: RuleEngine,
-    fw: &Arc<RwLock<Firewall>>,
+    // fw: &Arc<RwLock<Firewall>>,
+    fw: Arc<Firewall>,
     check_interval: Duration,
 ) -> anyhow::Result<()> {
     let mut interval = time::interval(check_interval);
 
     loop {
         interval.tick().await;
-        let mut fw_guard = fw.write().await;
+        // let mut fw_guard = fw.write().await;
 
-        match engine.check_and_apply(&mut fw_guard).await {
+        match engine.check_and_apply(Arc::clone(&fw)).await {
             Ok(_) => {}
             Err(e) => error!("check and apply fail {}", e),
         }
-        drop(fw_guard);
+        // drop(fw_guard);
+        // drop(fw);
     }
 }
