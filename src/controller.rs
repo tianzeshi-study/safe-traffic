@@ -171,14 +171,19 @@ impl Firewall {
 
     /// 创建速率限制规则
     async fn create_limit_rule(&self, ip: IpAddr, kbps: u64, burst: u64) -> Result<String> {
+        let direction  = match self.hook {
+            HookType::Input => "saddr",
+            HookType::Output => "daddr",
+        };
+
         let ip_version = match ip {
-            IpAddr::V4(_) => "ip saddr",
-            IpAddr::V6(_) => "ip6 saddr",
+            IpAddr::V4(_) => "ip",
+            IpAddr::V6(_) => "ip6",
         };
 
         let rule_cmd = format!(
-            "add rule {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes {}",
-            self.family, self.table_name, self.chain_name, ip_version, ip, kbps, burst, self.policy
+            "add rule {} {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes {}",
+            self.family, self.table_name, self.chain_name, ip_version, direction, ip, kbps, burst, self.policy
         );
 
         self.executor.execute(&rule_cmd).await?;
@@ -251,14 +256,18 @@ impl Firewall {
 
     /// 创建封禁规则
     async fn create_ban_rule(&self, ip: IpAddr) -> Result<String> {
+        let direction  = match self.hook {
+            HookType::Input => "saddr",
+            HookType::Output => "daddr",
+        };
         let ip_version = match ip {
-            IpAddr::V4(_) => "ip saddr",
-            IpAddr::V6(_) => "ip6 saddr",
+            IpAddr::V4(_) => "ip",
+            IpAddr::V6(_) => "ip6",
         };
 
         let rule_cmd = format!(
-            "add rule {} {} {} {} {} drop",
-            self.family, self.table_name, self.chain_name, ip_version, ip
+            "add rule {} {} {} {} {} {} drop",
+            self.family, self.table_name, self.chain_name, ip_version, direction, ip
         );
 
         let output_with_handle = self.executor.execute(&rule_cmd).await?;

@@ -14,7 +14,8 @@ use std::{
 };
 use tokio::time;
 
-const MAX_WINDOW_BUFFER: usize = 10;
+const MAX_WINDOW_BUFFER: usize = 60;
+const CONCURRENT_SIZE: usize = 10;
 
 /// 流量统计结构体
 #[derive(Debug, Clone)]
@@ -111,7 +112,7 @@ impl RuleEngine {
         // 异步并发处理
         stream::iter(entries)
             .map(|entry| Ok::<_, anyhow::Error>(entry))
-            .try_for_each_concurrent(10, |(ip, win)| {
+            .try_for_each_concurrent(CONCURRENT_SIZE, |(ip, win)| {
                 let fw = Arc::clone(&fw_origin);
                 async move {
                     // let ip = *entry.key();
