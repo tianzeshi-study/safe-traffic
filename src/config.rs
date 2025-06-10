@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, fs, net::IpAddr, path::Path};
 
 /// hook type , input or output
@@ -67,7 +67,7 @@ impl fmt::Display for FamilyType {
 }
 
 /// 单条规则动作类型：限速或封禁
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Action {
     /// 限速模式，参数：kbit/s
     RateLimit { kbps: u64, burst: Option<u64> },

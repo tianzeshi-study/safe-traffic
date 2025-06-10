@@ -4,6 +4,7 @@ use crate::{
     monitor::TrafficMonitor,
     nft::NftExecutor,
     rules::{RuleEngine, TrafficStats},
+    daemon::TrafficDaemon,
 };
 use dashmap::DashMap;
 use log::info;
@@ -25,6 +26,7 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
         Duration::from_secs(cfg.monitor_interval.unwrap_or(1)),
         executor,
     );
+    let daemon = TrafficDaemon::new(fw.clone());
 
     info!(
         "Traffic monitoring and rules engines have been started, monitoring interface: {}",
@@ -36,7 +38,8 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
         fw,
         Duration::from_secs(cfg.rule_check_interval.unwrap_or(1)),
     );
+    let daemon_task = daemon.start();
 
-    tokio::try_join!(monitor_task, engine_task)?;
+    tokio::try_join!(monitor_task, engine_task, daemon_task)?;
     Ok(())
 }

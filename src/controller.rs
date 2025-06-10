@@ -8,11 +8,12 @@ use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use serde::{Serialize, Deserialize};
 
 use tokio::sync::RwLock;
 
 /// 防火墙规则信息
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirewallRule {
     pub id: String,
     pub ip: IpAddr,
@@ -430,7 +431,7 @@ impl Firewall {
     }
 
     /// 检查防火墙状态
-    async fn status(&self) -> Result<String> {
+    pub async fn status(&self) -> Result<String> {
         let rules = self.rules.read().await;
         let active_count = rules.len();
         let expired_count = rules
