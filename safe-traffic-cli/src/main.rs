@@ -120,27 +120,34 @@ async fn main() -> Result<()> {
 
         Commands::List => {
             match client.get_active_rules().await {
-                Ok(rules) => {
-                    if rules.is_empty() {
-                        println!("No active rules found.");
-                    } else {
-                        println!("Active firewall rules:");
-                        println!("{:<20} {:<15} {:<12} {:<20} {:<10}", 
-                                "Rule ID", "IP", "Type", "Parameters", "Status");
-                        println!("{}", "-".repeat(80));
-                        
-                        for rule in rules {
-                            // 假设 FirewallRule 有这些字段，根据实际结构调整
-                            println!("rule: {:?}", rule);
-                            
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to get active rules: {}", e);
-                    std::process::exit(1);
-                }
+    Ok(rules) => {
+        if rules.is_empty() {
+            println!("No active rules found.");
+        } else {
+            println!("Active firewall rules:");
+            println!(
+                "{:<36} {:<15} {:<12} {:<20}",
+                "Rule ID", "IP", "Type", "Created At"
+            );
+            println!("{}", "-".repeat(90));
+
+            for rule in rules {
+                println!(
+                    "{:<36} {:<15} {:<12} {:<20}",
+                    rule.id,
+                    rule.ip,
+                    rule.rule_type,
+                    rule.created_at
+                );
             }
+        }
+    }
+    Err(e) => {
+        eprintln!("Failed to get active rules: {}", e);
+        std::process::exit(1);
+    }
+}
+
         }
 
         Commands::Ping => {

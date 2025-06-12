@@ -1,6 +1,7 @@
-use std::sync::Arc;
-use std::path::Path;
-use std::net::IpAddr;
+use std::{sync::Arc,
+path::Path,
+net::IpAddr,
+fmt};
 use tokio::net::UnixStream;
     use tokio::io::{AsyncBufReadExt, BufReader, AsyncWriteExt};
     use serde::{Serialize, Deserialize};
@@ -14,6 +15,22 @@ pub enum Action {
     RateLimit { kbps: u64, burst: Option<u64> },
     /// 封禁模式，参数：秒
     Ban { seconds: u64 },
+}
+
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Action::Ban{seconds} => format!("ban {}s",seconds),
+            Action::RateLimit{kbps, burst} => {
+                if let Some(burst) = burst {
+                format!("RateLimit {} {}", kbps, burst)
+                } else {
+                    format!("RateLimit {}", kbps)
+                                    }
+                },
+        };
+        write!(f, "{}", s)
+    }
 }
 
 /// 防火墙规则信息
@@ -147,7 +164,7 @@ pub enum ResponseData {
         pub async fn get_active_rules(&mut self) -> Result<Vec<FirewallRule>> {
             let request = Request::GetActiveRules;
             let  response = self.send_request(request).await?;
-            dbg!(&response);
+
             match response {
                 Response::Success(ResponseData::RuleList(rules)) => Ok(rules),
                 Response::Error { message } => Err(anyhow::anyhow!(message)),
