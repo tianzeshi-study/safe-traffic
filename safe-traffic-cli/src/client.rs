@@ -88,7 +88,7 @@ pub enum ResponseData {
     /// 布尔结果
     Boolean(bool),
     /// 字符串列表结果
-    StringList(Vec<String>),
+    // StringList(Vec<String>),
     /// 规则列表结果
     RuleList(Vec<FirewallRule>),
     /// Ping响应
