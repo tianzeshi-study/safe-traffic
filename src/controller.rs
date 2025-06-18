@@ -5,10 +5,10 @@ use crate::{
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, info, warn};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
-use serde::{Serialize, Deserialize};
 
 use tokio::sync::RwLock;
 
@@ -172,7 +172,7 @@ impl Firewall {
 
     /// 创建速率限制规则
     async fn create_limit_rule(&self, ip: IpAddr, kbps: u64, burst: u64) -> Result<String> {
-        let direction  = match self.hook {
+        let direction = match self.hook {
             HookType::Input => "saddr",
             HookType::Output => "daddr",
         };
@@ -184,7 +184,15 @@ impl Firewall {
 
         let rule_cmd = format!(
             "add rule {} {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes {}",
-            self.family, self.table_name, self.chain_name, ip_version, direction, ip, kbps, burst, self.policy
+            self.family,
+            self.table_name,
+            self.chain_name,
+            ip_version,
+            direction,
+            ip,
+            kbps,
+            burst,
+            self.policy
         );
 
         self.executor.execute(&rule_cmd).await?;
@@ -257,7 +265,7 @@ impl Firewall {
 
     /// 创建封禁规则
     async fn create_ban_rule(&self, ip: IpAddr) -> Result<String> {
-        let direction  = match self.hook {
+        let direction = match self.hook {
             HookType::Input => "saddr",
             HookType::Output => "daddr",
         };
@@ -402,7 +410,7 @@ impl Firewall {
     }
 
     /// 清理所有自管理规则
-    pub async fn cleanup(&self) -> Result<()> {
+    pub async fn flush(&self) -> Result<()> {
         let rule_count = {
             let rules = self.rules.read().await;
             rules.len()
@@ -418,7 +426,31 @@ impl Firewall {
             "flush chain {} {} {}",
             self.family, self.table_name, self.chain_name
         );
-        self.executor.execute(&flush_cmd).await?;
+        self.executor.input(&flush_cmd).await?;
+
+        // 清空内存中的规则记录
+        self.rules.write().await.clear();
+
+        info!(
+            "Cleaned up all rules in chain {} (count: {})",
+            self.chain_name, rule_count
+        );
+        Ok(())
+    }
+
+    pub async fn cleanup(&self) -> Result<()> {
+        let rule_count = {
+            let rules = self.rules.read().await;
+            rules.len()
+        };
+
+        if rule_count == 0 {
+            info!("No rules to clean up");
+            return Ok(());
+        }
+
+        let delete_cmd = format!("delete table {} {}", self.family, self.table_name);
+        self.executor.input(&delete_cmd).await?;
 
         // 清空内存中的规则记录
         self.rules.write().await.clear();

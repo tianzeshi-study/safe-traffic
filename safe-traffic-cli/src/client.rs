@@ -1,13 +1,9 @@
-use std::{sync::Arc,
-path::Path,
-net::IpAddr,
-fmt};
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::{fmt, net::IpAddr, path::Path, sync::Arc};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-    use tokio::io::{AsyncBufReadExt, BufReader, AsyncWriteExt};
-    use serde::{Serialize, Deserialize};
-    use chrono::{Utc, DateTime};
-    use anyhow::Result;
-
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Action {
@@ -20,14 +16,14 @@ pub enum Action {
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Action::Ban{seconds} => format!("ban {}s",seconds),
-            Action::RateLimit{kbps, burst} => {
+            Action::Ban { seconds } => format!("ban {}s", seconds),
+            Action::RateLimit { kbps, burst } => {
                 if let Some(burst) = burst {
-                format!("RateLimit {} {}", kbps, burst)
+                    format!("RateLimit {} {}", kbps, burst)
                 } else {
                     format!("RateLimit {}", kbps)
-                                    }
-                },
+                }
+            }
         };
         write!(f, "{}", s)
     }
@@ -43,32 +39,22 @@ pub struct FirewallRule {
     handle: Option<String>,
 }
 
-
-
 /// 客户端请求类型
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", content = "data")]
 pub enum Request {
     /// 设置IP速率限制
-    Limit { 
-        ip: IpAddr, 
-        kbps: u64, 
-        burst: Option<u64> 
+    Limit {
+        ip: IpAddr,
+        kbps: u64,
+        burst: Option<u64>,
     },
     /// 封禁IP指定时长
-    Ban { 
-        ip: IpAddr, 
-        seconds: u64 
-    },
+    Ban { ip: IpAddr, seconds: u64 },
     /// 检查规则是否过期
-    IsExpiration { 
-        rule_id: String, 
-        seconds: u64 
-    },
+    IsExpiration { rule_id: String, seconds: u64 },
     /// 解封指定规则ID
-    Unban { 
-        rule_id: String 
-    },
+    Unban { rule_id: String },
     /// 清理过期规则
     CleanupExpired,
     /// 获取所有活跃规则
@@ -80,10 +66,7 @@ pub enum Request {
     /// 获取防火墙状态
     Status,
     /// 批量封禁IP
-    BatchBan { 
-        ips: Vec<IpAddr>, 
-        seconds: u64 
-    },
+    BatchBan { ips: Vec<IpAddr>, seconds: u64 },
     /// 健康检查
     Ping,
 }
@@ -112,74 +95,73 @@ pub enum ResponseData {
     Pong,
 }
 
+pub struct TrafficClient {
+    stream: UnixStream,
+}
 
-    pub struct TrafficClient {
-        stream: UnixStream,
+impl TrafficClient {
+    pub async fn connect<P: AsRef<Path>>(socket_path: P) -> Result<Self> {
+        let stream = UnixStream::connect(socket_path).await?;
+        Ok(Self { stream })
     }
 
-    impl TrafficClient {
-        pub async fn connect<P: AsRef<Path>>(socket_path: P) -> Result<Self> {
-            let stream = UnixStream::connect(socket_path).await?;
-            Ok(Self { stream })
+    pub async fn send_request(&mut self, request: Request) -> Result<Response> {
+        let request_json = serde_json::to_vec(&request)?;
+        self.stream.write_all(&request_json).await?;
+
+        let mut reader = BufReader::new(&mut self.stream);
+        let mut response_line = String::new();
+        reader.read_line(&mut response_line).await?;
+
+        let response: Response = serde_json::from_str(&response_line.trim())?;
+        Ok(response)
+    }
+
+    pub async fn limit(&mut self, ip: IpAddr, kbps: u64, burst: Option<u64>) -> Result<String> {
+        let request = Request::Limit { ip, kbps, burst };
+        match self.send_request(request).await? {
+            Response::Success(ResponseData::Message(rule_id)) => Ok(rule_id),
+            Response::Error { message } => Err(anyhow::anyhow!(message)),
+            _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
+    }
 
-        pub async fn send_request(&mut self, request: Request) -> Result<Response> {
-            let request_json = serde_json::to_vec(&request)?;
-            self.stream.write_all(&request_json).await?;
-
-            let mut reader = BufReader::new(&mut self.stream);
-            let mut response_line = String::new();
-            reader.read_line(&mut response_line).await?;
-
-            let response: Response = serde_json::from_str(&response_line.trim())?;
-            Ok(response)
+    pub async fn ban(&mut self, ip: IpAddr, seconds: u64) -> Result<String> {
+        let request = Request::Ban { ip, seconds };
+        match self.send_request(request).await? {
+            Response::Success(ResponseData::Message(rule_id)) => Ok(rule_id),
+            Response::Error { message } => Err(anyhow::anyhow!(message)),
+            _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
+    }
 
-        pub async fn limit(&mut self, ip: IpAddr, kbps: u64, burst: Option<u64>) -> Result<String> {
-            let request = Request::Limit { ip, kbps, burst };
-            match self.send_request(request).await? {
-                Response::Success(ResponseData::Message(rule_id)) => Ok(rule_id),
-                Response::Error { message } => Err(anyhow::anyhow!(message)),
-                _ => Err(anyhow::anyhow!("Unexpected response format")),
-            }
+    pub async fn unban(&mut self, rule_id: String) -> Result<()> {
+        let request = Request::Unban { rule_id };
+        match self.send_request(request).await? {
+            Response::Success(_) => Ok(()),
+            Response::Error { message } => Err(anyhow::anyhow!(message)),
         }
+    }
 
-        pub async fn ban(&mut self, ip: IpAddr, seconds: u64) -> Result<String> {
-            let request = Request::Ban { ip, seconds };
-            match self.send_request(request).await? {
-                Response::Success(ResponseData::Message(rule_id)) => Ok(rule_id),
-                Response::Error { message } => Err(anyhow::anyhow!(message)),
-                _ => Err(anyhow::anyhow!("Unexpected response format")),
-            }
+    pub async fn get_active_rules(&mut self) -> Result<Vec<FirewallRule>> {
+        let request = Request::GetActiveRules;
+        let response = self.send_request(request).await?;
+
+        match response {
+            Response::Success(ResponseData::RuleList(rules)) => Ok(rules),
+            Response::Error { message } => Err(anyhow::anyhow!(message)),
+            _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
+    }
 
-        pub async fn unban(&mut self, rule_id: String) -> Result<()> {
-            let request = Request::Unban { rule_id };
-            match self.send_request(request).await? {
-                Response::Success(_) => Ok(()),
-                Response::Error { message } => Err(anyhow::anyhow!(message)),
-            }
+    pub async fn ping(&mut self) -> Result<()> {
+        let request = Request::Ping;
+        match self.send_request(request).await? {
+            Response::Success(ResponseData::Pong) => Ok(()),
+            Response::Error { message } => Err(anyhow::anyhow!(message)),
+            _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
-
-        pub async fn get_active_rules(&mut self) -> Result<Vec<FirewallRule>> {
-            let request = Request::GetActiveRules;
-            let  response = self.send_request(request).await?;
-
-            match response {
-                Response::Success(ResponseData::RuleList(rules)) => Ok(rules),
-                Response::Error { message } => Err(anyhow::anyhow!(message)),
-                _ => Err(anyhow::anyhow!("Unexpected response format")),
-            }
-        }
-
-        pub async fn ping(&mut self) -> Result<()> {
-            let request = Request::Ping;
-            match self.send_request(request).await? {
-                Response::Success(ResponseData::Pong) => Ok(()),
-                Response::Error { message } => Err(anyhow::anyhow!(message)),
-                _ => Err(anyhow::anyhow!("Unexpected response format")),
-            }
-        }
+    }
 }
 
 #[cfg(test)]
@@ -207,7 +189,7 @@ mod tests {
         //     .socket_path("/tmp/test.sock")
         //     .max_connections(50)
         //     .build();
-        // 
+        //
         // assert_eq!(server.socket_path, "/tmp/test.sock");
         // assert_eq!(server.max_connections, 50);
     }
@@ -218,10 +200,10 @@ mod tests {
             ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             seconds: 3600,
         };
-        
+
         let json = serde_json::to_string(&request).unwrap();
         let deserialized: Request = serde_json::from_str(&json).unwrap();
-        
+
         match deserialized {
             Request::Ban { ip, seconds } => {
                 assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));

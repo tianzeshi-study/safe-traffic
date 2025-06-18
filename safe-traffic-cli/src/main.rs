@@ -1,8 +1,8 @@
 mod client;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::net::IpAddr;
 use std::path::PathBuf;
-use anyhow::Result;
 use tokio;
 
 // 假设这些类型在你的项目中已定义
@@ -65,102 +65,91 @@ async fn main() -> Result<()> {
     let mut client = match TrafficClient::connect(&cli.socket).await {
         Ok(client) => client,
         Err(e) => {
-            eprintln!("Failed to connect to traffic daemon at {:?}: {}", cli.socket, e);
+            eprintln!(
+                "Failed to connect to traffic daemon at {:?}: {}",
+                cli.socket, e
+            );
             std::process::exit(1);
         }
     };
 
     // 执行命令
     match cli.command {
-        Commands::Limit { ip, kbps, burst } => {
-            match client.limit(ip, kbps, burst).await {
-                Ok(rule_id) => {
-                    println!("Traffic limit applied successfully!");
-                    println!("Rule ID: {}", rule_id);
-                    println!("IP: {}", ip);
-                    println!("Speed limit: {} kbps", kbps);
-                    if let Some(burst) = burst {
-                        println!("Burst limit: {} kb", burst);
+        Commands::Limit { ip, kbps, burst } => match client.limit(ip, kbps, burst).await {
+            Ok(rule_id) => {
+                println!("Traffic limit applied successfully!");
+                println!("Rule ID: {}", rule_id);
+                println!("IP: {}", ip);
+                println!("Speed limit: {} kbps", kbps);
+                if let Some(burst) = burst {
+                    println!("Burst limit: {} kb", burst);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to apply traffic limit: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::Ban { ip, seconds } => match client.ban(ip, seconds).await {
+            Ok(rule_id) => {
+                println!("IP banned successfully!");
+                println!("Rule ID: {}", rule_id);
+                println!("IP: {}", ip);
+                println!("Duration: {} seconds", seconds);
+            }
+            Err(e) => {
+                eprintln!("Failed to ban IP: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::Unban { rule_id } => match client.unban(rule_id.clone()).await {
+            Ok(()) => {
+                println!("Rule removed successfully!");
+                println!("Rule ID: {}", rule_id);
+            }
+            Err(e) => {
+                eprintln!("Failed to remove rule: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::List => match client.get_active_rules().await {
+            Ok(rules) => {
+                if rules.is_empty() {
+                    println!("No active rules found.");
+                } else {
+                    println!("Active firewall rules:");
+                    println!(
+                        "{:<36} {:<15} {:<12} {:<20}",
+                        "Rule ID", "IP", "Type", "Created At"
+                    );
+                    println!("{}", "-".repeat(90));
+
+                    for rule in rules {
+                        println!(
+                            "{:<36} {:<15} {:<12} {:<20}",
+                            rule.id, rule.ip, rule.rule_type, rule.created_at
+                        );
                     }
                 }
-                Err(e) => {
-                    eprintln!("Failed to apply traffic limit: {}", e);
-                    std::process::exit(1);
-                }
             }
-        }
-
-        Commands::Ban { ip, seconds } => {
-            match client.ban(ip, seconds).await {
-                Ok(rule_id) => {
-                    println!("IP banned successfully!");
-                    println!("Rule ID: {}", rule_id);
-                    println!("IP: {}", ip);
-                    println!("Duration: {} seconds", seconds);
-                }
-                Err(e) => {
-                    eprintln!("Failed to ban IP: {}", e);
-                    std::process::exit(1);
-                }
+            Err(e) => {
+                eprintln!("Failed to get active rules: {}", e);
+                std::process::exit(1);
             }
-        }
+        },
 
-        Commands::Unban { rule_id } => {
-            match client.unban(rule_id.clone()).await {
-                Ok(()) => {
-                    println!("Rule removed successfully!");
-                    println!("Rule ID: {}", rule_id);
-                }
-                Err(e) => {
-                    eprintln!("Failed to remove rule: {}", e);
-                    std::process::exit(1);
-                }
+        Commands::Ping => match client.ping().await {
+            Ok(()) => {
+                println!("Pong! Traffic daemon is responding.");
             }
-        }
-
-        Commands::List => {
-            match client.get_active_rules().await {
-    Ok(rules) => {
-        if rules.is_empty() {
-            println!("No active rules found.");
-        } else {
-            println!("Active firewall rules:");
-            println!(
-                "{:<36} {:<15} {:<12} {:<20}",
-                "Rule ID", "IP", "Type", "Created At"
-            );
-            println!("{}", "-".repeat(90));
-
-            for rule in rules {
-                println!(
-                    "{:<36} {:<15} {:<12} {:<20}",
-                    rule.id,
-                    rule.ip,
-                    rule.rule_type,
-                    rule.created_at
-                );
+            Err(e) => {
+                eprintln!("Failed to ping traffic daemon: {}", e);
+                std::process::exit(1);
             }
-        }
-    }
-    Err(e) => {
-        eprintln!("Failed to get active rules: {}", e);
-        std::process::exit(1);
-    }
-}
-
-        }
-
-        Commands::Ping => {
-            match client.ping().await {
-                Ok(()) => {
-                    println!("Pong! Traffic daemon is responding.");
-                }
-                Err(e) => {
-                    eprintln!("Failed to ping traffic daemon: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
+        },
     }
 
     Ok(())
@@ -182,10 +171,12 @@ mod tests {
             "traffic-cli",
             "limit",
             "192.168.1.1",
-            "--kbps", "1000",
-            "--burst", "2000"
+            "--kbps",
+            "1000",
+            "--burst",
+            "2000",
         ];
-        
+
         let cli = Cli::try_parse_from(args).unwrap();
         match cli.command {
             Commands::Limit { ip, kbps, burst } => {
@@ -199,13 +190,8 @@ mod tests {
 
     #[test]
     fn test_ban_command_parsing() {
-        let args = vec![
-            "traffic-cli",
-            "ban",
-            "10.0.0.1",
-            "--seconds", "3600"
-        ];
-        
+        let args = vec!["traffic-cli", "ban", "10.0.0.1", "--seconds", "3600"];
+
         let cli = Cli::try_parse_from(args).unwrap();
         match cli.command {
             Commands::Ban { ip, seconds } => {

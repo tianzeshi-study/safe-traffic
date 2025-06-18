@@ -1,12 +1,13 @@
 mod config; // 配置解析
 mod controller; // nftables 控制
+mod daemon;
 mod error;
 mod logger;
 mod monitor; // 流量监控
 mod nft;
 mod rules; // 规则引擎 // 日志记录
 mod tasks;
-mod daemon;
+mod utils;
 
 use clap::Parser;
 use config::Config;
@@ -52,12 +53,12 @@ async fn main() -> anyhow::Result<()> {
     // 启动防火墙控制器
     let fw = Arc::new(controller::Firewall::new(&cfg, Arc::clone(&executor)).await?);
     // 启动流量监控与规则引擎
-    tasks::run(cfg, fw.clone(), executor).await?;
+    tasks::run(cfg, fw.clone(), executor.clone()).await?;
     // 等待终止信号（Ctrl+C）
     // signal::ctrl_c().await?;
-    info!("收到退出信号，正在清理...");
-    // fw.write().await.cleanup().await?;
+
     fw.cleanup().await?;
+    executor.cleanup().await;
 
     Ok(())
 }

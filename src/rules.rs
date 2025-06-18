@@ -1,6 +1,7 @@
 use crate::{
     config::{HookType, Rule},
     controller::Firewall,
+    utils::{ControlSignal, RunState, SignalController, TrafficStats},
 };
 
 use chrono::{DateTime, Utc};
@@ -16,128 +17,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    sync::{mpsc, Notify, Mutex},
+    sync::{mpsc, Mutex, Notify},
     time,
 };
 
 const MAX_WINDOW_BUFFER: usize = 60;
 const CONCURRENT_SIZE: usize = 10;
-
-/// 控制信号枚举
-#[derive(Debug, Clone)]
-pub enum ControlSignal {
-    Pause,
-    Resume,
-    Stop,
-}
-
-/// 运行状态
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunState {
-    Running,
-    Paused,
-    Stopped,
-}
-
-pub struct SignalController {
-    // 控制信号
-    pub control_tx: Arc<Mutex<Option<mpsc::UnboundedSender<ControlSignal>>>>,
-    // 运行状态
-    pub state: Arc<AtomicBool>, // true = running, false = paused
-    // 停止信号
-    pub stop_flag: Arc<AtomicBool>,
-    // 暂停/恢复通知
-    pub resume_notify: Arc<Notify>,
-}
-impl SignalController {
-    pub fn  new() -> Self {
-    Self {
-        control_tx: Arc::new(Mutex::new(None)),
-            state: Arc::new(AtomicBool::new(true)), // 默认运行状态
-            stop_flag: Arc::new(AtomicBool::new(false)),
-            resume_notify: Arc::new(Notify::new()),
-}
-}
-/// 获取当前运行状态
-    pub async fn get_state(&self) -> RunState {
-        if self.stop_flag.load(Ordering::Relaxed) {
-            RunState::Stopped
-        } else if self.state.load(Ordering::Relaxed) {
-            RunState::Running
-        } else {
-            RunState::Paused
-        }
-    }
-
-    /// 暂停执行
-    pub async fn pause(&self) -> Result<(), &'static str> {
-        if self.stop_flag.load(Ordering::Relaxed) {
-            return Err("Engine is already stopped");
-        }
-        let guard = self.control_tx.lock().await;
-        
-        if let Some(tx) = (*guard).clone() {
-            tx.send(ControlSignal::Pause)
-                .map_err(|_| "Failed to send pause signal")?;
-            info!("RuleEngine pause signal sent");
-        } else {
-            return Err("Engine is not running");
-        }
-        Ok(())
-    }
-
-    /// 恢复执行
-    pub async fn resume(&self) -> Result<(), &'static str> {
-        if self.stop_flag.load(Ordering::Relaxed) {
-            return Err("Engine is already stopped");
-        }
-        
-        if let Some(tx) = (*self.control_tx.lock().await).clone() {
-            tx.send(ControlSignal::Resume)
-                .map_err(|_| "Failed to send resume signal")?;
-            info!("RuleEngine resume signal sent");
-        } else {
-            return Err("Engine is not running");
-        }
-        Ok(())
-    }
-
-    /// 优雅停止
-    pub async fn stop(&self) -> Result<(), &'static str> {
-        if let Some(tx) = (*self.control_tx.lock().await).clone() {
-            tx.send(ControlSignal::Stop)
-                .map_err(|_| "Failed to send stop signal")?;
-            info!("RuleEngine stop signal sent");
-        } else {
-            return Err("Engine is not running");
-        }
-        Ok(())
-    }
-
-    
-}
-
-/// 流量统计结构体
-#[derive(Debug, Clone)]
-pub struct TrafficStats {
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-    pub rx_delta: u64,
-    pub tx_delta: u64,
-    pub last_updated: Instant,
-}
-
-impl Default for TrafficStats {
-    fn default() -> Self {
-        Self {
-            rx_bytes: 0,
-            tx_bytes: 0,
-            rx_delta: 0,
-            tx_delta: 0,
-            last_updated: Instant::now(),
-        }
-    }
-}
 
 /// 单 IP 的滑动窗口记录
 #[derive(Clone, Debug)]
@@ -156,8 +41,8 @@ pub struct RuleEngine {
     stats: Arc<DashMap<IpAddr, TrafficStats>>,
     handles: DashMap<IpAddr, Vec<String>>,
     windows: DashMap<IpAddr, Window>,
-    signal_controller: SignalController
-    }
+    signal_controller: SignalController,
+}
 
 impl RuleEngine {
     /// 新建实例
@@ -168,11 +53,8 @@ impl RuleEngine {
             handles: DashMap::new(),
             windows: DashMap::new(),
             signal_controller: SignalController::new(),
-            
         }
     }
-    
-
 
     /// 获取当前运行状态
     pub async fn get_state(&self) -> RunState {
@@ -193,7 +75,6 @@ impl RuleEngine {
     pub async fn stop(&self) -> Result<(), &'static str> {
         self.signal_controller.stop().await
     }
-
 
     /// 检查所有 IP 并在必要时调用防火墙控制
     pub async fn check_and_apply(&self, fw_origin: Arc<Firewall>) -> anyhow::Result<()> {
@@ -225,7 +106,7 @@ impl RuleEngine {
                 (*entry.key(), v)
             })
             .collect();
-        
+
         debug!(
             "starting checking rule: stats entries count: {}",
             entries.len()
@@ -312,19 +193,21 @@ impl RuleEngine {
     /// 启动规则引擎主循环，支持暂停/恢复/停止
     pub async fn start(&self, fw: Arc<Firewall>, check_interval: Duration) -> anyhow::Result<()> {
         info!("RuleEngine starting...");
-        
+
         // 创建控制信号通道
         let (control_tx, mut control_rx) = mpsc::unbounded_channel::<ControlSignal>();
         *self.signal_controller.control_tx.lock().await = Some(control_tx);
-        
+
         // 重置状态
         self.signal_controller.state.store(true, Ordering::Relaxed);
-        self.signal_controller.stop_flag.store(false, Ordering::Relaxed);
-        
+        self.signal_controller
+            .stop_flag
+            .store(false, Ordering::Relaxed);
+
         let mut interval = time::interval(check_interval);
-        
+
         info!("RuleEngine started successfully");
-        
+
         loop {
             tokio::select! {
                 // 处理控制信号
@@ -340,7 +223,7 @@ impl RuleEngine {
                             self.signal_controller.resume_notify.notify_waiters();
                         }
                         Some(ControlSignal::Stop) => {
-                            info!("RuleEngine stopping gracefully...");
+                            info!("stopping RuleEngine...");
                             self.signal_controller.stop_flag.store(true, Ordering::Relaxed);
                             break;
                         }
@@ -350,21 +233,21 @@ impl RuleEngine {
                         }
                     }
                 }
-                
+
                 // 定时器tick
                 _ = interval.tick() => {
                     // 检查是否需要停止
                     if self.signal_controller.stop_flag.load(Ordering::Relaxed) {
                         break;
                     }
-                    
+
                     // 检查是否暂停
                     if !self.signal_controller.state.load(Ordering::Relaxed) {
                         debug!("RuleEngine is paused, waiting for resume signal...");
                         self.signal_controller.resume_notify.notified().await;
                         continue;
                     }
-                    
+
                     // 执行检查和应用规则
                     match self.check_and_apply(Arc::clone(&fw)).await {
                         Ok(_) => {}
@@ -373,13 +256,12 @@ impl RuleEngine {
                 }
             }
         }
-        
+
         // 清理资源
         info!("RuleEngine performing cleanup...");
-        *self.signal_controller.control_tx.lock().await     = None;
-        
+        *self.signal_controller.control_tx.lock().await = None;
+
         info!("RuleEngine stopped gracefully");
         Ok(())
     }
 }
-
