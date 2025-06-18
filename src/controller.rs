@@ -502,6 +502,7 @@ impl Firewall {
     }
 }
 
+/*
 impl Drop for Firewall {
     fn drop(&mut self) {
         // 异步清理执行器池
@@ -512,3 +513,4 @@ impl Drop for Firewall {
         });
     }
 }
+*/

@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     // 启动流量监控与规则引擎
     tasks::run(cfg, fw.clone(), executor).await?;
     // 等待终止信号（Ctrl+C）
-    signal::ctrl_c().await?;
+    // signal::ctrl_c().await?;
     info!("收到退出信号，正在清理...");
     // fw.write().await.cleanup().await?;
     fw.cleanup().await?;

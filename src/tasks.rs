@@ -64,12 +64,11 @@ let engine_task = tokio::spawn(async move {
     // 等待任一任务完成或接收到 Ctrl+C 信号
     tokio::select! {
         // 监听 Ctrl+C 信号
+        /*
         _ = ctrl_c => {
             info!("Shutdown signal received, stopping all components...");
             
             // 优雅停止各个组件
-            // 注意：这里假设各个组件都有相应的停止方法
-            // 如果它们没有，你需要根据实际情况修改
             
             // 停止规则引擎
             if let Err(e) = engine.stop().await {
@@ -89,6 +88,7 @@ let engine_task = tokio::spawn(async move {
             
             info!("All components stopped gracefully");
         }
+        */
         
         // 或者等待某个任务自然结束
 
