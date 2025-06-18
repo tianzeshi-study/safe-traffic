@@ -39,71 +39,26 @@ pub enum RunState {
     Stopped,
 }
 
-/// 流量统计结构体
-#[derive(Debug, Clone)]
-pub struct TrafficStats {
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-    pub rx_delta: u64,
-    pub tx_delta: u64,
-    pub last_updated: Instant,
-}
-
-impl Default for TrafficStats {
-    fn default() -> Self {
-        Self {
-            rx_bytes: 0,
-            tx_bytes: 0,
-            rx_delta: 0,
-            tx_delta: 0,
-            last_updated: Instant::now(),
-        }
-    }
-}
-
-/// 单 IP 的滑动窗口记录
-#[derive(Clone, Debug)]
-struct Window {
-    /// 最近 bytes 的循环缓冲
-    buffer: Vec<u64>,
-    /// 缓冲当前填充位置
-    pos: usize,
-    /// 上次更新时间
-    last_ts: DateTime<Utc>,
-}
-
-/// 规则引擎管理所有 IP 的窗口并执行动作
-pub struct RuleEngine {
-    rules: Vec<Rule>,
-    stats: Arc<DashMap<IpAddr, TrafficStats>>,
-    handles: DashMap<IpAddr, Vec<String>>,
-    windows: DashMap<IpAddr, Window>,
+pub struct SignalController {
     // 控制信号
-    control_tx: Arc<Mutex<Option<mpsc::UnboundedSender<ControlSignal>>>>,
+    pub control_tx: Arc<Mutex<Option<mpsc::UnboundedSender<ControlSignal>>>>,
     // 运行状态
-    state: Arc<AtomicBool>, // true = running, false = paused
+    pub state: Arc<AtomicBool>, // true = running, false = paused
     // 停止信号
-    stop_flag: Arc<AtomicBool>,
+    pub stop_flag: Arc<AtomicBool>,
     // 暂停/恢复通知
-    resume_notify: Arc<Notify>,
+    pub resume_notify: Arc<Notify>,
 }
-
-impl RuleEngine {
-    /// 新建实例
-    pub fn new(rules: Vec<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
-        RuleEngine {
-            rules,
-            stats,
-            handles: DashMap::new(),
-            windows: DashMap::new(),
-            control_tx: Arc::new(Mutex::new(None)),
+impl SignalController {
+    pub fn  new() -> Self {
+    Self {
+        control_tx: Arc::new(Mutex::new(None)),
             state: Arc::new(AtomicBool::new(true)), // 默认运行状态
             stop_flag: Arc::new(AtomicBool::new(false)),
             resume_notify: Arc::new(Notify::new()),
-        }
-    }
-
-    /// 获取当前运行状态
+}
+}
+/// 获取当前运行状态
     pub async fn get_state(&self) -> RunState {
         if self.stop_flag.load(Ordering::Relaxed) {
             RunState::Stopped
@@ -158,6 +113,87 @@ impl RuleEngine {
         }
         Ok(())
     }
+
+    
+}
+
+/// 流量统计结构体
+#[derive(Debug, Clone)]
+pub struct TrafficStats {
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_delta: u64,
+    pub tx_delta: u64,
+    pub last_updated: Instant,
+}
+
+impl Default for TrafficStats {
+    fn default() -> Self {
+        Self {
+            rx_bytes: 0,
+            tx_bytes: 0,
+            rx_delta: 0,
+            tx_delta: 0,
+            last_updated: Instant::now(),
+        }
+    }
+}
+
+/// 单 IP 的滑动窗口记录
+#[derive(Clone, Debug)]
+struct Window {
+    /// 最近 bytes 的循环缓冲
+    buffer: Vec<u64>,
+    /// 缓冲当前填充位置
+    pos: usize,
+    /// 上次更新时间
+    last_ts: DateTime<Utc>,
+}
+
+/// 规则引擎管理所有 IP 的窗口并执行动作
+pub struct RuleEngine {
+    rules: Vec<Rule>,
+    stats: Arc<DashMap<IpAddr, TrafficStats>>,
+    handles: DashMap<IpAddr, Vec<String>>,
+    windows: DashMap<IpAddr, Window>,
+    signal_controller: SignalController
+    }
+
+impl RuleEngine {
+    /// 新建实例
+    pub fn new(rules: Vec<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
+        RuleEngine {
+            rules,
+            stats,
+            handles: DashMap::new(),
+            windows: DashMap::new(),
+            signal_controller: SignalController::new(),
+            
+        }
+    }
+    
+
+
+    /// 获取当前运行状态
+    pub async fn get_state(&self) -> RunState {
+        self.signal_controller.get_state().await
+    }
+
+    /// 暂停执行
+    pub async fn pause(&self) -> Result<(), &'static str> {
+        self.signal_controller.pause().await
+    }
+
+    /// 恢复执行
+    pub async fn resume(&self) -> Result<(), &'static str> {
+        self.signal_controller.resume().await
+    }
+
+    /// 优雅停止
+    pub async fn stop(&self) -> Result<(), &'static str> {
+        self.signal_controller.stop().await
+    }
+
 
     /// 检查所有 IP 并在必要时调用防火墙控制
     pub async fn check_and_apply(&self, fw_origin: Arc<Firewall>) -> anyhow::Result<()> {
@@ -279,11 +315,11 @@ impl RuleEngine {
         
         // 创建控制信号通道
         let (control_tx, mut control_rx) = mpsc::unbounded_channel::<ControlSignal>();
-        *self.control_tx.lock().await = Some(control_tx);
+        *self.signal_controller.control_tx.lock().await = Some(control_tx);
         
         // 重置状态
-        self.state.store(true, Ordering::Relaxed);
-        self.stop_flag.store(false, Ordering::Relaxed);
+        self.signal_controller.state.store(true, Ordering::Relaxed);
+        self.signal_controller.stop_flag.store(false, Ordering::Relaxed);
         
         let mut interval = time::interval(check_interval);
         
@@ -296,16 +332,16 @@ impl RuleEngine {
                     match signal {
                         Some(ControlSignal::Pause) => {
                             info!("RuleEngine pausing...");
-                            self.state.store(false, Ordering::Relaxed);
+                            self.signal_controller.state.store(false, Ordering::Relaxed);
                         }
                         Some(ControlSignal::Resume) => {
                             info!("RuleEngine resuming...");
-                            self.state.store(true, Ordering::Relaxed);
-                            self.resume_notify.notify_waiters();
+                            self.signal_controller.state.store(true, Ordering::Relaxed);
+                            self.signal_controller.resume_notify.notify_waiters();
                         }
                         Some(ControlSignal::Stop) => {
                             info!("RuleEngine stopping gracefully...");
-                            self.stop_flag.store(true, Ordering::Relaxed);
+                            self.signal_controller.stop_flag.store(true, Ordering::Relaxed);
                             break;
                         }
                         None => {
@@ -318,14 +354,14 @@ impl RuleEngine {
                 // 定时器tick
                 _ = interval.tick() => {
                     // 检查是否需要停止
-                    if self.stop_flag.load(Ordering::Relaxed) {
+                    if self.signal_controller.stop_flag.load(Ordering::Relaxed) {
                         break;
                     }
                     
                     // 检查是否暂停
-                    if !self.state.load(Ordering::Relaxed) {
+                    if !self.signal_controller.state.load(Ordering::Relaxed) {
                         debug!("RuleEngine is paused, waiting for resume signal...");
-                        self.resume_notify.notified().await;
+                        self.signal_controller.resume_notify.notified().await;
                         continue;
                     }
                     
@@ -340,7 +376,7 @@ impl RuleEngine {
         
         // 清理资源
         info!("RuleEngine performing cleanup...");
-        *self.control_tx.lock().await     = None;
+        *self.signal_controller.control_tx.lock().await     = None;
         
         info!("RuleEngine stopped gracefully");
         Ok(())

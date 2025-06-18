@@ -64,7 +64,7 @@ let engine_task = tokio::spawn(async move {
     // 等待任一任务完成或接收到 Ctrl+C 信号
     tokio::select! {
         // 监听 Ctrl+C 信号
-        /*
+
         _ = ctrl_c => {
             info!("Shutdown signal received, stopping all components...");
             
@@ -88,7 +88,7 @@ let engine_task = tokio::spawn(async move {
             
             info!("All components stopped gracefully");
         }
-        */
+
         
         // 或者等待某个任务自然结束
 
