@@ -818,6 +818,7 @@ dependencies = [
  "futures",
  "log",
  "serde",
+ "tempfile",
  "tokio",
  "toml",
 ]
@@ -838,7 +839,6 @@ dependencies = [
  "safe-traffic-common",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "toml",

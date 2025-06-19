@@ -51,6 +51,8 @@ pub enum ResponseData {
     Message(String),
     /// 布尔结果
     Boolean(bool),
+    /// 字符串结果
+    StringList(Vec<String>),
     /// 规则列表结果
     RuleList(Vec<FirewallRule>),
     /// Ping响应

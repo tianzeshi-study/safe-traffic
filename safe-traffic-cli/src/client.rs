@@ -1,13 +1,10 @@
 use safe_traffic_common::{
-    config::Action,
     transport::{Request, Response, ResponseData},
     utils::FirewallRule,
 };
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use std::{fmt, net::IpAddr, path::Path, sync::Arc};
+use std::{net::IpAddr, path::Path};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
@@ -59,13 +56,14 @@ impl TrafficClient {
         }
     }
 
-    pub async fn get_active_rules(&mut self) -> Result<Vec<FirewallRule>> {
+    pub async fn get_active_rules(&mut self) -> Result<Option<Vec<FirewallRule>>> {
         let request = Request::GetActiveRules;
         let response = self.send_request(request).await?;
         dbg!(&response);
 
         match response {
-            Response::Success(ResponseData::RuleList(rules)) => Ok(rules),
+            Response::Success(ResponseData::RuleList(rules)) => Ok(Some(rules)),
+            Response::Success(ResponseData::StringList(rules)) => Ok(None),
             Response::Error { message } => Err(anyhow::anyhow!(message)),
             _ => Err(anyhow::anyhow!("Unexpected response format")),
         }

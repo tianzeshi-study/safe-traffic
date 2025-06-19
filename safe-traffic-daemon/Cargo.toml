@@ -28,8 +28,7 @@ safe-traffic-common = { version = "0.1.0", path = "../safe-traffic-common" }
 
 
 
-[dev-dependencies]
-tempfile = "3.20.0"
+
 
 [features]
 default = []

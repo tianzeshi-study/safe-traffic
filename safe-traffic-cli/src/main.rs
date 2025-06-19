@@ -117,9 +117,8 @@ async fn main() -> Result<()> {
 
         Commands::List => match client.get_active_rules().await {
             Ok(rules) => {
-                if rules.is_empty() {
-                    println!("No active rules found.");
-                } else {
+                if let Some(rules) = rules {
+
                     println!("Active firewall rules:");
                     println!(
                         "{:<36} {:<15} {:<12} {:<20}",
@@ -133,7 +132,9 @@ async fn main() -> Result<()> {
                             rule.id, rule.ip, rule.rule_type, rule.created_at
                         );
                     }
-                }
+                } else {
+                println!("No active rules found.");
+                }                     
             }
             Err(e) => {
                 eprintln!("Failed to get active rules: {}", e);
