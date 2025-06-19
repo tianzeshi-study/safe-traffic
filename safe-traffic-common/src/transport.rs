@@ -33,6 +33,8 @@ pub enum Request {
     BatchBan { ips: Vec<IpAddr>, seconds: u64 },
     /// 健康检查
     Ping,
+    ///  清空规则
+    Flush,
 }
 
 /// 服务器响应类型

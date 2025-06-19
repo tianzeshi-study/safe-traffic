@@ -55,6 +55,8 @@ enum Commands {
     List,
     /// Ping the traffic daemon
     Ping,
+    /// clean up all rules
+    Flush,
 }
 
 #[tokio::main]
@@ -118,7 +120,6 @@ async fn main() -> Result<()> {
         Commands::List => match client.get_active_rules().await {
             Ok(rules) => {
                 if let Some(rules) = rules {
-
                     println!("Active firewall rules:");
                     println!(
                         "{:<36} {:<15} {:<12} {:<20}",
@@ -133,8 +134,8 @@ async fn main() -> Result<()> {
                         );
                     }
                 } else {
-                println!("No active rules found.");
-                }                     
+                    println!("No active rules found.");
+                }
             }
             Err(e) => {
                 eprintln!("Failed to get active rules: {}", e);
@@ -148,6 +149,16 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 eprintln!("Failed to ping traffic daemon: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::Flush => match client.flush().await {
+            Ok(msg) => {
+                println!("{}", msg);
+            }
+            Err(e) => {
+                eprintln!("Failed to remove rules: {}", e);
                 std::process::exit(1);
             }
         },

@@ -2,12 +2,7 @@ use crate::controller::Firewall;
 
 use anyhow::{Context, Result};
 use log::{debug, error, info};
-use safe_traffic_common::{
-    transport::{Request, Response, ResponseData},
-    utils::FirewallRule,
-};
-use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
+use safe_traffic_common::transport::{Request, Response, ResponseData};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -220,6 +215,22 @@ impl TrafficDaemon {
                 Ok(_) => {
                     info!("Successfully cleaned up all rules");
                     ResponseData::Message("All rules cleaned up successfully".to_string())
+                }
+                Err(e) => {
+                    error!("Failed to cleanup rules: {}", e);
+                    return Ok(Response::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
+
+            Request::Flush => match firewall.flush().await {
+                Ok(rule_count) => {
+                    info!("Successfully cleaned up {} rules", rule_count);
+                    ResponseData::Message(format!(
+                        "All rules cleaned up successfully, cleaned up {} rules",
+                        rule_count
+                    ))
                 }
                 Err(e) => {
                     error!("Failed to cleanup rules: {}", e);

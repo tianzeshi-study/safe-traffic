@@ -1,12 +1,11 @@
 use crate::nft::{parse_output, NftError, NftExecutor, NftObject};
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use log::{debug, info, warn};
 use safe_traffic_common::{
     config::{Action, Config, FamilyType, HookType, PolicyType},
     utils::FirewallRule,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -401,7 +400,7 @@ impl Firewall {
     }
 
     /// 清理所有自管理规则
-    pub async fn flush(&self) -> Result<()> {
+    pub async fn flush(&self) -> Result<usize> {
         let rule_count = {
             let rules = self.rules.read().await;
             rules.len()
@@ -409,7 +408,7 @@ impl Firewall {
 
         if rule_count == 0 {
             info!("No rules to clean up");
-            return Ok(());
+            return Ok(0);
         }
 
         // 清空链中的所有规则
@@ -426,7 +425,7 @@ impl Firewall {
             "Cleaned up all rules in chain {} (count: {})",
             self.chain_name, rule_count
         );
-        Ok(())
+        Ok(rule_count)
     }
 
     pub async fn cleanup(&self) -> Result<()> {
