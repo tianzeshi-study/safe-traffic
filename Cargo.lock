@@ -802,10 +802,24 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "safe-traffic-common",
  "serde",
  "serde_json",
  "tokio",
  "tokio-test",
+]
+
+[[package]]
+name = "safe-traffic-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures",
+ "log",
+ "serde",
+ "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -821,6 +835,7 @@ dependencies = [
  "log",
  "netlink-packet-route",
  "rtnetlink",
+ "safe-traffic-common",
  "serde",
  "serde_json",
  "tempfile",

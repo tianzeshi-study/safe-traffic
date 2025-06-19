@@ -1,8 +1,10 @@
 use crate::{
-    config::{HookType, Rule},
     controller::Firewall,
-    utils::{ControlSignal, RunState, SignalController, TrafficStats},
-};
+    };
+    use safe_traffic_common::{
+        config::{HookType, Rule, Action},
+    utils::{ControlSignal, RunState, SignalController, TrafficStats}
+    };
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -139,11 +141,11 @@ impl RuleEngine {
                         debug!("{} average bps: {}", &ip, &avg_bps);
                         if avg_bps > rule.threshold_bps {
                             match rule.action {
-                                crate::config::Action::RateLimit { kbps, burst } => {
+                                Action::RateLimit { kbps, burst } => {
                                     debug!("intend to limit the speed of {} to {}kbps", ip, kbps);
                                     fw.clone().limit(ip, kbps, burst).await?;
                                 }
-                                crate::config::Action::Ban { seconds } => {
+                                Action::Ban { seconds } => {
                                     debug!("intend to ban {} for {} seconds", ip, seconds);
 
                                     let rule_id = fw.ban(ip, seconds).await?;
@@ -174,10 +176,10 @@ impl RuleEngine {
         if let Some(ids) = self.handles.get(&ip) {
             for id in ids.clone() {
                 match rule.action {
-                    crate::config::Action::RateLimit { kbps: _, burst: _ } => {
+                    Action::RateLimit { kbps: _, burst: _ } => {
                         continue;
                     }
-                    crate::config::Action::Ban { seconds } => {
+                    Action::Ban { seconds } => {
                         if fw.is_expiration(&id, seconds).await {
                             debug!("intend to unban {} because of expiration", ip);
                             fw.unban(&id).await?;

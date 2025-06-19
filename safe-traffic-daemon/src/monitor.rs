@@ -1,7 +1,7 @@
 use crate::{
     nft::{parser::*, NftError, NftExecutor},
-    utils::TrafficStats,
-};
+    };
+    use safe_traffic_common::utils::TrafficStats;
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
 use log::{debug, error, warn};

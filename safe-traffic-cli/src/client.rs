@@ -1,3 +1,5 @@
+use safe_traffic_common::{config::Action, utils::FirewallRule};
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -5,39 +7,7 @@ use std::{fmt, net::IpAddr, path::Path, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub enum Action {
-    /// 限速模式，参数：kbit/s
-    RateLimit { kbps: u64, burst: Option<u64> },
-    /// 封禁模式，参数：秒
-    Ban { seconds: u64 },
-}
 
-impl fmt::Display for Action {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Action::Ban { seconds } => format!("ban {}s", seconds),
-            Action::RateLimit { kbps, burst } => {
-                if let Some(burst) = burst {
-                    format!("RateLimit {} {}", kbps, burst)
-                } else {
-                    format!("RateLimit {}", kbps)
-                }
-            }
-        };
-        write!(f, "{}", s)
-    }
-}
-
-/// 防火墙规则信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FirewallRule {
-    pub id: String,
-    pub ip: IpAddr,
-    pub rule_type: Action,
-    pub created_at: DateTime<Utc>,
-    handle: Option<String>,
-}
 
 /// 客户端请求类型
 #[derive(Debug, Deserialize, Serialize)]

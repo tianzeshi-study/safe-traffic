@@ -1,7 +1,9 @@
 use crate::{
-    config::{Action, Config, FamilyType, HookType, PolicyType},
     nft::{parse_output, NftError, NftExecutor, NftObject},
 };
+    use safe_traffic_common::{config::{Action, Config, FamilyType, HookType, PolicyType},
+    utils::FirewallRule
+    };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, info, warn};
@@ -12,15 +14,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-/// 防火墙规则信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FirewallRule {
-    pub id: String,
-    pub ip: IpAddr,
-    pub rule_type: Action,
-    pub created_at: DateTime<Utc>,
-    handle: Option<String>,
-}
+
 
 /// 纯 Rust 防火墙控制器（使用池化的 nft 执行器）
 #[derive(Clone, Debug)]

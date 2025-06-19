@@ -1,7 +1,15 @@
 use crate::{
-    config::Config, controller::Firewall, daemon::TrafficDaemon, monitor::TrafficMonitor,
-    nft::NftExecutor, rules::RuleEngine, utils::TrafficStats,
+    controller::Firewall, 
+    daemon::TrafficDaemon, 
+    monitor::TrafficMonitor,
+    nft::NftExecutor, 
+    rules::RuleEngine, 
 };
+    
+    use safe_traffic_common::{
+        config::Config,
+    utils::TrafficStats
+    };
 use dashmap::DashMap;
 use log::{error, info};
 use rtnetlink::new_connection;

@@ -1,4 +1,3 @@
-mod config; // 配置解析
 mod controller; // nftables 控制
 mod daemon;
 mod error;
@@ -7,7 +6,9 @@ mod monitor; // 流量监控
 mod nft;
 mod rules; // 规则引擎 // 日志记录
 mod tasks;
-mod utils;
+
+
+use safe_traffic_common::config;
 
 use clap::Parser;
 use config::Config;

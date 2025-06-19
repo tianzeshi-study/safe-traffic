@@ -3,4 +3,13 @@ resolver = "2"
 members = [
     "safe-traffic-daemon",
     "safe-traffic-cli"
-]
+, "safe-traffic-common"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }             # 异步运行时
+futures = "0.3"
+chrono = { version = "0.4", features = ["serde"] }         # 时间处理
+log = "0.4"                                                # 日志接口
+serde = { version = "1", features = ["derive"] }           # 配置反序列化
+clap = { version = "4", features = ["derive"] }            # 命令行参数解析
+anyhow = "1.0"

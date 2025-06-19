@@ -1,3 +1,6 @@
+use crate::controller::{Firewall};
+
+use safe_traffic_common::utils::FirewallRule;
 use anyhow::{Context, Result};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
@@ -7,7 +10,6 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 
-use crate::controller::{Firewall, FirewallRule};
 
 /// 客户端请求类型
 #[derive(Debug, Deserialize, Serialize)]

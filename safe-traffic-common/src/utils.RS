@@ -1,3 +1,5 @@
+use crate::config::Action;
+
 use futures::stream::{TryStreamExt};
 use log::debug;
 use std::{
@@ -5,9 +7,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+        net::IpAddr,
     time::Instant,
 };
 use tokio::sync::{mpsc, Mutex, Notify};
+use serde::{Serialize, Deserialize};
+use chrono::{Utc, DateTime};
 
 /// 控制信号枚举
 #[derive(Debug, Clone)]
@@ -121,4 +126,14 @@ impl Default for TrafficStats {
             last_updated: Instant::now(),
         }
     }
+}
+
+/// 防火墙规则信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirewallRule {
+    pub id: String,
+    pub ip: IpAddr,
+    pub rule_type: Action,
+    pub created_at: DateTime<Utc>,
+    pub handle: Option<String>,
 }

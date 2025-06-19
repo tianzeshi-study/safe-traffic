@@ -1,0 +1,13 @@
+[package]
+name = "safe-traffic-common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio ={workspace=true}
+futures ={workspace=true}
+chrono = {workspace=true}
+log = {workspace=true}
+serde = {workspace=true}
+anyhow = {workspace=true}
+toml = "0.5"                                               # TOML 解析

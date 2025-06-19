@@ -75,6 +75,23 @@ pub enum Action {
     Ban { seconds: u64 },
 }
 
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Action::Ban { seconds } => format!("ban {}s", seconds),
+            Action::RateLimit { kbps, burst } => {
+                if let Some(burst) = burst {
+                    format!("RateLimit {} {}", kbps, burst)
+                } else {
+                    format!("RateLimit {}", kbps)
+                }
+            }
+        };
+        write!(f, "{}", s)
+    }
+}
+
+
 /// 单条流量规则
 #[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
