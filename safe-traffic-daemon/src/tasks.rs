@@ -24,7 +24,7 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
         Duration::from_secs(cfg.monitor_interval.unwrap_or(1)),
         executor,
     ));
-    let daemon = Arc::new(TrafficDaemon::new(fw.clone()));
+    let daemon = Arc::new(TrafficDaemon::new(fw.clone(), engine.clone()));
 
     info!(
         "Traffic monitoring and rules engines have been started, monitoring interface: {}",

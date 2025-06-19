@@ -1,4 +1,7 @@
-use crate::controller::Firewall;
+use crate::{
+    controller::Firewall,
+    rules::RuleEngine,
+};
 
 use anyhow::{Context, Result};
 use log::{debug, error, info};
@@ -11,15 +14,20 @@ use tokio::net::{UnixListener, UnixStream};
 /// 流量监控服务器
 pub struct TrafficDaemon {
     firewall: Arc<Firewall>,
+    engine: Arc<RuleEngine>,
     socket_path: String,
     max_connections: usize,
 }
 
 impl TrafficDaemon {
     /// 创建新的服务器实例
-    pub fn new(firewall: Arc<Firewall>) -> Self {
+    pub fn new(
+    firewall: Arc<Firewall>,
+    engine: Arc<RuleEngine>
+    ) -> Self {
         Self {
             firewall,
+            engine,
             socket_path: "/run/traffic.sock".to_string(),
             max_connections: 100,
         }
@@ -53,11 +61,12 @@ impl TrafficDaemon {
             match listener.accept().await {
                 Ok((stream, _)) => {
                     let firewall = Arc::clone(&self.firewall);
+                    let engine = Arc::clone(&self.engine);
                     let semaphore = Arc::clone(&semaphore);
 
                     tokio::spawn(async move {
                         let _permit = semaphore.acquire().await.unwrap();
-                        if let Err(e) = Self::handle_connection(stream, firewall).await {
+                        if let Err(e) = Self::handle_connection(stream, firewall, engine).await {
                             error!("Error handling connection: {}", e);
                         }
                     });
@@ -70,7 +79,7 @@ impl TrafficDaemon {
     }
 
     /// 处理单个客户端连接
-    async fn handle_connection(mut stream: UnixStream, firewall: Arc<Firewall>) -> Result<()> {
+    async fn handle_connection(mut stream: UnixStream, firewall: Arc<Firewall>, engine: Arc<RuleEngine>) -> Result<()> {
         let mut buffer = vec![0u8; 8192]; // 增大缓冲区以处理更大的请求
 
         loop {
@@ -82,7 +91,7 @@ impl TrafficDaemon {
                 Ok(bytes_read) => {
                     let request_data = &buffer[..bytes_read];
 
-                    match Self::process_request(request_data, &firewall).await {
+                    match Self::process_request(request_data, &firewall, &engine).await {
                         Ok(response) => {
                             let response_json = serde_json::to_vec(&response)
                                 .context("Failed to serialize response")?;
@@ -120,7 +129,7 @@ impl TrafficDaemon {
     }
 
     /// 处理客户端请求，为每个 Firewall 公开方法提供对应的 handler
-    async fn process_request(data: &[u8], firewall: &Arc<Firewall>) -> Result<Response> {
+    async fn process_request(data: &[u8], firewall: &Arc<Firewall>, engine: &Arc<RuleEngine>) -> Result<Response> {
         let request: Request =
             serde_json::from_slice(data).context("Failed to parse request JSON")?;
 
@@ -239,6 +248,19 @@ impl TrafficDaemon {
                     });
                 }
             },
+            
+            Request::Stop => match engine.stop().await {
+                Ok(()) => {
+                    info!("Successfully stop");
+                    ResponseData::Message("stopped".to_string())
+                }
+                Err(e) => {
+                    error!("Failed to stopp: {}", e);
+                    return Ok(Response::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
 
             Request::Status => match firewall.status().await {
                 Ok(status_info) => {
@@ -318,14 +340,16 @@ impl TrafficDaemon {
 /// 服务器构建器，用于更灵活的配置
 pub struct ServerBuilder {
     firewall: Arc<Firewall>,
+    engine: Arc<RuleEngine>,
     socket_path: Option<String>,
     max_connections: Option<usize>,
 }
 
 impl ServerBuilder {
-    pub fn new(firewall: Arc<Firewall>) -> Self {
+    pub fn new(firewall: Arc<Firewall>, engine: Arc<RuleEngine>) -> Self {
         Self {
             firewall,
+            engine,
             socket_path: None,
             max_connections: None,
         }
@@ -342,7 +366,10 @@ impl ServerBuilder {
     }
 
     pub fn build(self) -> TrafficDaemon {
-        let mut server = TrafficDaemon::new(self.firewall);
+        let mut server = TrafficDaemon::new(
+        self.firewall,
+        self.engine,
+        );
 
         if let Some(path) = self.socket_path {
             server = server.with_socket_path(path);

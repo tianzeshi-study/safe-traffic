@@ -86,6 +86,15 @@ impl TrafficClient {
             _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
     }
+    
+    pub async fn stop(&mut self) -> Result<String> {
+        let request = Request::Stop;
+        match self.send_request(request).await? {
+            Response::Success(ResponseData::Message(msg)) => Ok(msg),
+            Response::Error { message } => Err(anyhow::anyhow!(message)),
+            _ => Err(anyhow::anyhow!("Unexpected response format")),
+        }
+    }
 }
 
 #[cfg(test)]

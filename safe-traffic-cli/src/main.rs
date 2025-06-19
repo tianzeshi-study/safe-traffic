@@ -57,6 +57,8 @@ enum Commands {
     Ping,
     /// clean up all rules
     Flush,
+    /// stop daemon
+    Stop,
 }
 
 #[tokio::main]
@@ -159,6 +161,16 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 eprintln!("Failed to remove rules: {}", e);
+                std::process::exit(1);
+            }
+        },
+        
+        Commands::Stop => match client.stop().await {
+            Ok(msg) => {
+                println!("{}", msg);
+            }
+            Err(e) => {
+                eprintln!("Failed to stop: {}", e);
                 std::process::exit(1);
             }
         },

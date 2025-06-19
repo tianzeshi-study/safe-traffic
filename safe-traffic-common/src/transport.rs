@@ -35,6 +35,8 @@ pub enum Request {
     Ping,
     ///  清空规则
     Flush,
+    ///  停止进程
+    Stop,
 }
 
 /// 服务器响应类型
