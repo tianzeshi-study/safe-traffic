@@ -11,13 +11,13 @@ use log::{debug, error, info};
 use std::{
     net::IpAddr,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::Ordering,
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{
-    sync::{mpsc, Mutex, Notify},
+    sync::mpsc,
     time,
 };
 

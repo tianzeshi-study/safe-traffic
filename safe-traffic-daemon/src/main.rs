@@ -14,7 +14,6 @@ use config::Config;
 use env_logger::Env;
 use log::info;
 use std::sync::Arc;
-use tokio::signal;
 
 #[derive(Parser)]
 #[command(author, version, about = "Safe Server Traffic 自动限流与封禁工具")]
@@ -58,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     // signal::ctrl_c().await?;
 
     fw.cleanup().await?;
-    executor.cleanup().await;
+    // executor.cleanup().await?;
 
     Ok(())
 }

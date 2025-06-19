@@ -3,7 +3,7 @@ use crate::{
     nft::NftExecutor, rules::RuleEngine, utils::TrafficStats,
 };
 use dashmap::DashMap;
-use log::{error, info, warn};
+use log::{error, info};
 use rtnetlink::new_connection;
 use std::{net::IpAddr, sync::Arc, time::Duration};
 use tokio::signal;
@@ -11,7 +11,7 @@ use tokio::signal;
 /// 运行主监控逻辑
 pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> anyhow::Result<()> {
     let stats = Arc::new(DashMap::<IpAddr, TrafficStats>::new());
-    let mut engine = Arc::new(RuleEngine::new(cfg.rules.clone(), stats.clone()));
+    let engine = Arc::new(RuleEngine::new(cfg.rules.clone(), stats.clone()));
     let (connection, handle, _messages) = new_connection()?;
     tokio::spawn(connection);
 

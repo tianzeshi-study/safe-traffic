@@ -444,13 +444,15 @@ impl Firewall {
             rules.len()
         };
 
-        if rule_count == 0 {
-            info!("No rules to clean up");
-            return Ok(());
-        }
+        // if rule_count == 0 {
+            // info!("No rules to clean up");
+            // return Ok(());
+        // }
 
         let delete_cmd = format!("delete table {} {}", self.family, self.table_name);
         self.executor.input(&delete_cmd).await?;
+        let _ = self.executor.execute("list tables").await?;
+
 
         // 清空内存中的规则记录
         self.rules.write().await.clear();
