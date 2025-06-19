@@ -1,12 +1,11 @@
-use crate::{
-    nft::{parse_output, NftError, NftExecutor, NftObject},
-};
-    use safe_traffic_common::{config::{Action, Config, FamilyType, HookType, PolicyType},
-    utils::FirewallRule
-    };
+use crate::nft::{parse_output, NftError, NftExecutor, NftObject};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, info, warn};
+use safe_traffic_common::{
+    config::{Action, Config, FamilyType, HookType, PolicyType},
+    utils::FirewallRule,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -14,9 +13,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-
-
-/// 纯 Rust 防火墙控制器（使用池化的 nft 执行器）
+/// 防火墙控制器（使用池化的 nft 执行器）
 #[derive(Clone, Debug)]
 pub struct Firewall {
     family: FamilyType,
@@ -439,14 +436,13 @@ impl Firewall {
         };
 
         // if rule_count == 0 {
-            // info!("No rules to clean up");
-            // return Ok(());
+        // info!("No rules to clean up");
+        // return Ok(());
         // }
 
         let delete_cmd = format!("delete table {} {}", self.family, self.table_name);
         self.executor.input(&delete_cmd).await?;
         let _ = self.executor.execute("list tables").await?;
-
 
         // 清空内存中的规则记录
         self.rules.write().await.clear();

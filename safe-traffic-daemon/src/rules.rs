@@ -1,10 +1,8 @@
-use crate::{
-    controller::Firewall,
-    };
-    use safe_traffic_common::{
-        config::{HookType, Rule, Action},
-    utils::{ControlSignal, RunState, SignalController, TrafficStats}
-    };
+use crate::controller::Firewall;
+use safe_traffic_common::{
+    config::{Action, HookType, Rule},
+    utils::{ControlSignal, RunState, SignalController, TrafficStats},
+};
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -12,16 +10,10 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use log::{debug, error, info};
 use std::{
     net::IpAddr,
-    sync::{
-        atomic::Ordering,
-        Arc,
-    },
+    sync::{atomic::Ordering, Arc},
     time::Duration,
 };
-use tokio::{
-    sync::mpsc,
-    time,
-};
+use tokio::{sync::mpsc, time};
 
 const MAX_WINDOW_BUFFER: usize = 60;
 const CONCURRENT_SIZE: usize = 10;

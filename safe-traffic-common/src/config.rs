@@ -91,7 +91,6 @@ impl fmt::Display for Action {
     }
 }
 
-
 /// 单条流量规则
 #[derive(Deserialize, Debug, Clone)]
 pub struct Rule {

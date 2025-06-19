@@ -7,7 +7,6 @@ mod nft;
 mod rules; // 规则引擎 // 日志记录
 mod tasks;
 
-
 use safe_traffic_common::config;
 
 use clap::Parser;

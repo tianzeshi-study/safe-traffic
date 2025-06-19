@@ -1,11 +1,9 @@
-use crate::{
-    nft::{parser::*, NftError, NftExecutor},
-    };
-    use safe_traffic_common::utils::TrafficStats;
+use crate::nft::{parser::*, NftError, NftExecutor};
 use dashmap::DashMap;
 use futures::stream::TryStreamExt;
 use log::{debug, error, warn};
 use rtnetlink::Handle;
+use safe_traffic_common::utils::TrafficStats;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},

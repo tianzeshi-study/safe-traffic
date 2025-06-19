@@ -1,18 +1,12 @@
 use crate::{
-    controller::Firewall, 
-    daemon::TrafficDaemon, 
-    monitor::TrafficMonitor,
-    nft::NftExecutor, 
-    rules::RuleEngine, 
+    controller::Firewall, daemon::TrafficDaemon, monitor::TrafficMonitor, nft::NftExecutor,
+    rules::RuleEngine,
 };
-    
-    use safe_traffic_common::{
-        config::Config,
-    utils::TrafficStats
-    };
+
 use dashmap::DashMap;
 use log::{error, info};
 use rtnetlink::new_connection;
+use safe_traffic_common::{config::Config, utils::TrafficStats};
 use std::{net::IpAddr, sync::Arc, time::Duration};
 use tokio::signal;
 
