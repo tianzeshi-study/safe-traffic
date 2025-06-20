@@ -139,9 +139,13 @@ impl RuleEngine {
                         debug!("{} average bps: {}", &ip, &avg_bps);
                         if avg_bps > rule.threshold_bps {
                             match rule.action {
-                                Action::RateLimit { kbps, burst } => {
+                                Action::RateLimit { kbps, burst, seconds} => {
                                     debug!("intend to limit the speed of {} to {}kbps", ip, kbps);
-                                    fw.clone().limit(ip, kbps, burst).await?;
+                                    // let rule_id = if let Some(seconds) = seconds {
+                                    let rule_id = fw.clone().limit(ip, kbps, burst, seconds).await?;
+                                     // } else {
+                                         // fw.clone().infinity_limit(ip, kbps, burst).await?;
+                                     // };
                                 }
                                 Action::Ban { seconds } => {
                                     debug!("intend to ban {} for {} seconds", ip, seconds);
@@ -174,7 +178,7 @@ impl RuleEngine {
         if let Some(ids) = self.handles.get(&ip) {
             for id in ids.clone() {
                 match rule.action {
-                    Action::RateLimit { kbps: _, burst: _ } => {
+                    Action::RateLimit { kbps: _, burst: _, seconds: _} => {
                         continue;
                     }
                     Action::Ban { seconds } => {

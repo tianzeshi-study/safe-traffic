@@ -35,6 +35,9 @@ enum Commands {
         /// Burst limit (optional)
         #[arg(short, long)]
         burst: Option<u64>,
+        /// Duration in seconds
+        #[arg(short, long)]
+        seconds: Option<u64>,
     },
     /// Ban an IP address for a specific duration
     Ban {
@@ -91,7 +94,7 @@ async fn main() -> Result<()> {
 
     // 执行命令
     match cli.command {
-        Commands::Limit { ip, kbps, burst } => match client.limit(ip, kbps, burst).await {
+        Commands::Limit { ip, kbps, burst, seconds} => match client.limit(ip, kbps, burst, seconds).await {
             Ok(rule_id) => {
                 println!("Traffic limit applied successfully!");
                 println!("Rule ID: {}", rule_id);

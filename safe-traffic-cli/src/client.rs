@@ -30,8 +30,8 @@ impl TrafficClient {
         Ok(response)
     }
 
-    pub async fn limit(&mut self, ip: IpAddr, kbps: u64, burst: Option<u64>) -> Result<String> {
-        let request = Request::Limit { ip, kbps, burst };
+    pub async fn limit(&mut self, ip: IpAddr, kbps: u64, burst: Option<u64>, seconds: Option<u64>) -> Result<String> {
+        let request = Request::Limit { ip, kbps, burst, seconds};
         match self.send_request(request).await? {
             Response::Success(ResponseData::Message(rule_id)) => Ok(rule_id),
             Response::Error { message } => Err(anyhow::anyhow!(message)),

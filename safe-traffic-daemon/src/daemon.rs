@@ -138,7 +138,7 @@ impl TrafficDaemon {
         debug!("Processing request: {:?}", request);
 
         let response_data = match request {
-            Request::Limit { ip, kbps, burst } => match firewall.limit(ip, kbps, burst).await {
+            Request::Limit { ip, kbps, burst, seconds} => match firewall.limit(ip, kbps, burst, seconds).await {
                 Ok(rule_id) => {
                     info!("Successfully set limit for {}: {} kbps", ip, kbps);
                     ResponseData::Message(rule_id)

@@ -12,6 +12,7 @@ pub enum Request {
         ip: IpAddr,
         kbps: u64,
         burst: Option<u64>,
+        seconds: Option<u64>,
     },
     /// 封禁IP指定时长
     Ban { ip: IpAddr, seconds: u64 },

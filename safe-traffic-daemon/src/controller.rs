@@ -114,7 +114,7 @@ impl Firewall {
     }
 
     /// 对指定 IP 设置速率限制
-    pub async fn limit(&self, ip: IpAddr, kbps: u64, burst: Option<u64>) -> Result<String> {
+    pub async fn infinity_limit(&self, ip: IpAddr, kbps: u64, burst: Option<u64>) -> Result<String> {
         let rule_id = format!("limit_{}_{}", ip, kbps);
         let burst = if let Some(bur) = burst {
             bur
@@ -147,6 +147,75 @@ impl Firewall {
             rule_type: Action::RateLimit {
                 kbps,
                 burst: Some(burst),
+                seconds: None
+            },
+            created_at: Utc::now(),
+            handle: Some(handle),
+        };
+
+        self.rules.write().await.insert(rule_id.clone(), rule);
+        info!(
+            "Set speed limit for {}: {} KB/s (burst: {} KB)",
+            ip, kbps, burst
+        );
+
+        Ok(rule_id)
+    }
+    
+    pub async fn limit(&self, ip: IpAddr, kbps: u64, burst: Option<u64>, seconds: Option<u64>) -> Result<String> {
+        if seconds.is_none() {
+            return self.infinity_limit(ip, kbps, burst).await
+        };
+        let seconds = seconds.unwrap();
+
+        let duration = Duration::seconds(seconds as i64);
+        let now = Utc::now();
+        let until = now + duration;
+        let rule_id = format!("limit_{}_{}_{}", ip, kbps, until.timestamp());
+
+        let burst = if let Some(bur) = burst {
+            bur
+        } else {
+            kbps.min(1024) / 10
+        };
+
+        // 检查是否已存在相同规则
+        {
+            let rules = self.rules.read().await;
+            for (_, rule) in rules.iter() {
+                if rule.ip == ip {
+
+                    if let Action::RateLimit { 
+                    kbps: existing_kbps,
+                    seconds: sec, 
+                    ..
+                    } = rule.rule_type {
+                        let existing_until = rule.created_at + duration;
+                        if existing_until > Utc::now() {
+                            if existing_kbps == kbps&& sec == Some(seconds) {
+                            debug!(
+                                "IP {} has already been banned until {}, skipping",
+                                ip, existing_until
+                            );
+                            return Ok(rule.id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+
+
+        let handle = self.create_limit_rule(ip, kbps, burst).await?;
+
+        let rule = FirewallRule {
+            id: rule_id.clone(),
+            ip,
+            rule_type: Action::RateLimit {
+                kbps,
+                burst: Some(burst),
+                seconds: Some(seconds)
             },
             created_at: Utc::now(),
             handle: Some(handle),
