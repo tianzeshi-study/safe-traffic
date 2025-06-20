@@ -133,6 +133,7 @@ pub struct Config {
     pub executor_max_commands: Option<usize>, // 默认 100 条命令
     /// 规则列表
     pub rules: Vec<Rule>,
+    pub global_exclude: Option<HashSet<IpAddr>>,
 }
 
 impl Config {

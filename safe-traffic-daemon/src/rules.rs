@@ -77,6 +77,7 @@ impl RuleEngine {
         let entries: Vec<_> = self
             .stats
             .iter()
+            .filter(|entry| !fw_origin.is_excluded(entry.key()))
             .map(|entry| {
                 let bps = match fw_origin.hook {
                     HookType::Input => entry.value().rx_delta,

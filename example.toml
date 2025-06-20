@@ -10,6 +10,7 @@ rule_check_interval = 1
 executor_pool_size =5 # nft subprocess  max size 
 executor_max_age_secs = 300
 executor_max_commands = 100
+global_exclude = ["219.229.234.40"]
 
 [[rules]]
 window_secs = 20
