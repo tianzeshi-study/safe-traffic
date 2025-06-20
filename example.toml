@@ -22,7 +22,7 @@ excluded_ips = ["10.255.255.0"]
 [[rules]]
 window_secs = 10
 threshold_bps = 500_000
-action = { RateLimit = { kbps = 1, burst = 1} }
+action = { RateLimit = { kbps = 1, burst = 1, seconds = 60} }
 excluded_ips = ["::100:0"]
         
 

@@ -138,7 +138,12 @@ impl TrafficDaemon {
         debug!("Processing request: {:?}", request);
 
         let response_data = match request {
-            Request::Limit { ip, kbps, burst, seconds} => match firewall.limit(ip, kbps, burst, seconds).await {
+            Request::Limit {
+                ip,
+                kbps,
+                burst,
+                seconds,
+            } => match firewall.limit(ip, kbps, burst, seconds).await {
                 Ok(rule_id) => {
                     info!("Successfully set limit for {}: {} kbps", ip, kbps);
                     ResponseData::Message(rule_id)
@@ -170,7 +175,7 @@ impl TrafficDaemon {
                 ResponseData::Boolean(is_expired)
             }
 
-            Request::Unban { rule_id } => match firewall.unban(&rule_id).await {
+            Request::Unblock { rule_id } => match firewall.unblock(&rule_id).await {
                 Ok(_) => {
                     info!("Successfully unbanned rule: {}", rule_id);
                     ResponseData::Message(format!("Successfully unbanned rule: {}", rule_id))

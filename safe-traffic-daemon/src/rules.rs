@@ -139,13 +139,19 @@ impl RuleEngine {
                         debug!("{} average bps: {}", &ip, &avg_bps);
                         if avg_bps > rule.threshold_bps {
                             match rule.action {
-                                Action::RateLimit { kbps, burst, seconds} => {
+                                Action::RateLimit {
+                                    kbps,
+                                    burst,
+                                    seconds,
+                                } => {
                                     debug!("intend to limit the speed of {} to {}kbps", ip, kbps);
-                                    // let rule_id = if let Some(seconds) = seconds {
-                                    let rule_id = fw.clone().limit(ip, kbps, burst, seconds).await?;
-                                     // } else {
-                                         // fw.clone().infinity_limit(ip, kbps, burst).await?;
-                                     // };
+
+                                    let rule_id =
+                                        fw.clone().limit(ip, kbps, burst, seconds).await?;
+                                    self.handles
+                                        .entry(ip)
+                                        .and_modify(|vec| vec.push(rule_id.clone()))
+                                        .or_insert_with(|| vec![rule_id]);
                                 }
                                 Action::Ban { seconds } => {
                                     debug!("intend to ban {} for {} seconds", ip, seconds);
@@ -178,13 +184,23 @@ impl RuleEngine {
         if let Some(ids) = self.handles.get(&ip) {
             for id in ids.clone() {
                 match rule.action {
-                    Action::RateLimit { kbps: _, burst: _, seconds: _} => {
+                    Action::RateLimit {
+                        kbps: _,
+                        burst: _,
+                        seconds: seconds,
+                    } => {
+                        if let Some(seconds) = seconds {
+                            if fw.is_expiration(&id, seconds).await {
+                                debug!("intend to remove limit rule {} because of expiration", ip);
+                                fw.unblock(&id).await?;
+                            }
+                        }
                         continue;
                     }
                     Action::Ban { seconds } => {
                         if fw.is_expiration(&id, seconds).await {
                             debug!("intend to unban {} because of expiration", ip);
-                            fw.unban(&id).await?;
+                            fw.unblock(&id).await?;
                         }
                     }
                 }

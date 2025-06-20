@@ -42,7 +42,7 @@ impl Firewall {
             .unwrap_or("traffic_input".to_string());
         let hook = cfg.hook.clone().unwrap_or(HookType::Input);
         let priority = cfg.priority.clone().unwrap_or(0);
-        let policy = cfg.policy.clone().unwrap_or(PolicyType::Accept);
+        let policy = cfg.policy.clone().unwrap_or(PolicyType::Drop);
         let global_exclude = Arc::new(RwLock::new(
             cfg.global_exclude.clone().unwrap_or(HashSet::new()),
         ));
@@ -114,7 +114,12 @@ impl Firewall {
     }
 
     /// 对指定 IP 设置速率限制
-    pub async fn infinity_limit(&self, ip: IpAddr, kbps: u64, burst: Option<u64>) -> Result<String> {
+    pub async fn infinity_limit(
+        &self,
+        ip: IpAddr,
+        kbps: u64,
+        burst: Option<u64>,
+    ) -> Result<String> {
         let rule_id = format!("limit_{}_{}", ip, kbps);
         let burst = if let Some(bur) = burst {
             bur
@@ -147,7 +152,7 @@ impl Firewall {
             rule_type: Action::RateLimit {
                 kbps,
                 burst: Some(burst),
-                seconds: None
+                seconds: None,
             },
             created_at: Utc::now(),
             handle: Some(handle),
@@ -161,10 +166,16 @@ impl Firewall {
 
         Ok(rule_id)
     }
-    
-    pub async fn limit(&self, ip: IpAddr, kbps: u64, burst: Option<u64>, seconds: Option<u64>) -> Result<String> {
+
+    pub async fn limit(
+        &self,
+        ip: IpAddr,
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+    ) -> Result<String> {
         if seconds.is_none() {
-            return self.infinity_limit(ip, kbps, burst).await
+            return self.infinity_limit(ip, kbps, burst).await;
         };
         let seconds = seconds.unwrap();
 
@@ -184,28 +195,26 @@ impl Firewall {
             let rules = self.rules.read().await;
             for (_, rule) in rules.iter() {
                 if rule.ip == ip {
-
-                    if let Action::RateLimit { 
-                    kbps: existing_kbps,
-                    seconds: sec, 
-                    ..
-                    } = rule.rule_type {
+                    if let Action::RateLimit {
+                        kbps: existing_kbps,
+                        seconds: sec,
+                        ..
+                    } = rule.rule_type
+                    {
                         let existing_until = rule.created_at + duration;
                         if existing_until > Utc::now() {
-                            if existing_kbps == kbps&& sec == Some(seconds) {
-                            debug!(
-                                "IP {} has already been banned until {}, skipping",
-                                ip, existing_until
-                            );
-                            return Ok(rule.id.clone());
+                            if existing_kbps == kbps && sec == Some(seconds) {
+                                debug!(
+                                    "IP {} has already been banned until {}, skipping",
+                                    ip, existing_until
+                                );
+                                return Ok(rule.id.clone());
                             }
                         }
                     }
                 }
             }
         }
-        
-
 
         let handle = self.create_limit_rule(ip, kbps, burst).await?;
 
@@ -215,7 +224,7 @@ impl Firewall {
             rule_type: Action::RateLimit {
                 kbps,
                 burst: Some(burst),
-                seconds: Some(seconds)
+                seconds: Some(seconds),
             },
             created_at: Utc::now(),
             handle: Some(handle),
@@ -259,10 +268,30 @@ impl Firewall {
             self.policy
         );
 
-        self.executor.execute(&rule_cmd).await?;
+        // self.executor.execute(&rule_cmd).await?;
+        // let output_with_handle = self.create_ban_rule(ip).await?;
+        let output_with_handle = self.executor.execute(&rule_cmd).await?;
+        let nft_objs = parse_output(&output_with_handle).await?;
 
-        // 返回规则标识符
-        Ok(format!("limit_{}_{}", ip, Utc::now().timestamp()))
+        let nft_obj = nft_objs
+            .get(0)
+            .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
+
+        let handle = match nft_obj {
+            NftObject::Add(obj) => obj
+                .get_handle()
+                .await
+                .ok_or_else(|| anyhow!("fail to get "))?
+                .to_string(),
+            NftObject::Other(other) => {
+                return Err(anyhow!("parse output error: {:?}", other));
+            }
+            _ => {
+                return Err(anyhow!("parse output error: {:?}", nft_obj));
+            }
+        };
+
+        Ok(handle)
     }
 
     /// 对指定 IP 封禁指定时长
@@ -339,15 +368,12 @@ impl Firewall {
         };
 
         let rule_cmd = format!(
-            "add rule {} {} {} {} {} {} drop",
-            self.family, self.table_name, self.chain_name, ip_version, direction, ip
+            "add rule {} {} {} {} {} {} {}",
+            self.family, self.table_name, self.chain_name, ip_version, direction, ip, self.policy
         );
 
         let output_with_handle = self.executor.execute(&rule_cmd).await?;
 
-        // 返回规则标识符
-        // Ok(format!("ban_{}_{}", ip, Utc::now().timestamp()))
-        // Ok((format!("ban_{}_{}", ip, Utc::now().timestamp()), output_with_handle)
         Ok(output_with_handle)
     }
 
@@ -369,7 +395,7 @@ impl Firewall {
     }
 
     /// 解封指定IP
-    pub async fn unban(&self, id: &str) -> Result<()> {
+    pub async fn unblock(&self, id: &str) -> Result<()> {
         debug!("get RwLock to remove rule : {}", id);
 
         let handle = {

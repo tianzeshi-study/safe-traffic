@@ -70,7 +70,11 @@ impl fmt::Display for FamilyType {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Action {
     /// 限速模式，参数：kbit/s
-    RateLimit { kbps: u64, burst: Option<u64>, seconds: Option<u64> },
+    RateLimit {
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+    },
     /// 封禁模式，参数：秒
     Ban { seconds: u64 },
 }
@@ -79,14 +83,21 @@ impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             Action::Ban { seconds } => format!("ban {}s", seconds),
-            Action::RateLimit { kbps, burst, seconds} => {
+            Action::RateLimit {
+                kbps,
+                burst,
+                seconds,
+            } => {
                 let seconds: String = if let Some(seconds) = seconds {
                     format!("for {} s", seconds)
                 } else {
                     "infinity".to_string()
                 };
                 if let Some(burst) = burst {
-                    format!("RateLimit {} kbytes/second burst {} kbytes {}", kbps, burst, seconds)
+                    format!(
+                        "RateLimit {} kbytes/second burst {} kbytes {}",
+                        kbps, burst, seconds
+                    )
                 } else {
                     format!("RateLimit {}kbps  {}", kbps, seconds)
                 }

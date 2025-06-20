@@ -49,7 +49,7 @@ enum Commands {
         seconds: u64,
     },
     /// Remove a ban or limit rule by rule ID
-    Unban {
+    Unblock {
         /// Rule ID to remove
         #[arg(value_name = "RULE_ID")]
         rule_id: String,
@@ -94,7 +94,12 @@ async fn main() -> Result<()> {
 
     // 执行命令
     match cli.command {
-        Commands::Limit { ip, kbps, burst, seconds} => match client.limit(ip, kbps, burst, seconds).await {
+        Commands::Limit {
+            ip,
+            kbps,
+            burst,
+            seconds,
+        } => match client.limit(ip, kbps, burst, seconds).await {
             Ok(rule_id) => {
                 println!("Traffic limit applied successfully!");
                 println!("Rule ID: {}", rule_id);
@@ -123,7 +128,7 @@ async fn main() -> Result<()> {
             }
         },
 
-        Commands::Unban { rule_id } => match client.unban(rule_id.clone()).await {
+        Commands::Unblock { rule_id } => match client.unblock(rule_id.clone()).await {
             Ok(()) => {
                 println!("Rule removed successfully!");
                 println!("Rule ID: {}", rule_id);
