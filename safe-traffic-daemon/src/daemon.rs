@@ -158,6 +158,9 @@ impl TrafficDaemon {
 
             Request::Ban { ip, seconds } => match firewall.ban(ip, seconds).await {
                 Ok(rule_id) => {
+                    let seconds: String = seconds
+                        .map(|s| s.to_string())
+                        .unwrap_or("infinity".to_string());
                     info!("Successfully banned {} for {} seconds", ip, seconds);
                     ResponseData::Message(rule_id)
                 }
@@ -195,19 +198,6 @@ impl TrafficDaemon {
                 }
                 Err(e) => {
                     error!("Failed to exclude ip {}: {}", ip, e);
-                    return Ok(Response::Error {
-                        message: e.to_string(),
-                    });
-                }
-            },
-
-            Request::CleanupExpired => match firewall.cleanup_expired().await {
-                Ok(expired_rules) => {
-                    info!("Cleaned up {} expired rules", expired_rules.len());
-                    ResponseData::StringList(expired_rules)
-                }
-                Err(e) => {
-                    error!("Failed to cleanup expired rules: {}", e);
                     return Ok(Response::Error {
                         message: e.to_string(),
                     });

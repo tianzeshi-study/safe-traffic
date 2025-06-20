@@ -42,7 +42,7 @@ impl Firewall {
             .unwrap_or("traffic_input".to_string());
         let hook = cfg.hook.clone().unwrap_or(HookType::Input);
         let priority = cfg.priority.clone().unwrap_or(0);
-        let policy = cfg.policy.clone().unwrap_or(PolicyType::Drop);
+        let policy = cfg.policy.clone().unwrap_or(PolicyType::Accept);
         let global_exclude = Arc::new(RwLock::new(
             cfg.global_exclude.clone().unwrap_or(HashSet::new()),
         ));
@@ -256,16 +256,8 @@ impl Firewall {
         };
 
         let rule_cmd = format!(
-            "add rule {} {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes {}",
-            self.family,
-            self.table_name,
-            self.chain_name,
-            ip_version,
-            direction,
-            ip,
-            kbps,
-            burst,
-            self.policy
+            "add rule {} {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes drop",
+            self.family, self.table_name, self.chain_name, ip_version, direction, ip, kbps, burst,
         );
 
         // self.executor.execute(&rule_cmd).await?;
@@ -295,7 +287,11 @@ impl Firewall {
     }
 
     /// 对指定 IP 封禁指定时长
-    pub async fn ban(&self, ip: IpAddr, seconds: u64) -> Result<String> {
+    pub async fn ban(&self, ip: IpAddr, seconds: Option<u64>) -> Result<String> {
+        if seconds.is_none() {
+            return self.infinity_ban(ip).await;
+        };
+        let seconds = seconds.unwrap();
         let duration = Duration::seconds(seconds as i64);
         let now = Utc::now();
         let until = now + duration;
@@ -345,13 +341,62 @@ impl Firewall {
         let rule = FirewallRule {
             id: rule_id.clone(),
             ip,
-            rule_type: Action::Ban { seconds },
+            rule_type: Action::Ban {
+                seconds: Some(seconds),
+            },
             created_at: now,
             handle: Some(handle),
         };
 
         self.rules.write().await.insert(rule_id.clone(), rule);
         info!("Banned {} until {} \n rule id : {}", ip, until, &rule_id);
+
+        Ok(rule_id)
+    }
+
+    pub async fn infinity_ban(&self, ip: IpAddr) -> Result<String> {
+        let now = Utc::now();
+        let rule_id = format!("ban_{}", ip);
+
+        {
+            let rules = self.rules.read().await;
+            if let Some(existing_rule) = rules.get(&rule_id) {
+                debug!("Rule {} already exists, skipping creation", rule_id);
+                return Ok(rule_id);
+            }
+        }
+
+        let output_with_handle = self.create_ban_rule(ip).await?;
+        let nft_objs = parse_output(&output_with_handle).await?;
+
+        let nft_obj = nft_objs
+            .get(0)
+            .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
+
+        let handle = match nft_obj {
+            NftObject::Add(obj) => obj
+                .get_handle()
+                .await
+                .ok_or_else(|| anyhow!("fail to get "))?
+                .to_string(),
+            NftObject::Other(other) => {
+                return Err(anyhow!("parse output error: {:?}", other));
+            }
+            _ => {
+                return Err(anyhow!("parse output error: {:?}", nft_obj));
+            }
+        };
+
+        let rule = FirewallRule {
+            id: rule_id.clone(),
+            ip,
+            rule_type: Action::Ban { seconds: None },
+            created_at: now,
+            handle: Some(handle),
+        };
+
+        self.rules.write().await.insert(rule_id.clone(), rule);
+        info!("Banned {} infinity   \n rule id : {}", ip, &rule_id);
 
         Ok(rule_id)
     }
@@ -368,8 +413,8 @@ impl Firewall {
         };
 
         let rule_cmd = format!(
-            "add rule {} {} {} {} {} {} {}",
-            self.family, self.table_name, self.chain_name, ip_version, direction, ip, self.policy
+            "add rule {} {} {} {} {} {} drop",
+            self.family, self.table_name, self.chain_name, ip_version, direction, ip
         );
 
         let output_with_handle = self.executor.execute(&rule_cmd).await?;
@@ -439,45 +484,6 @@ impl Firewall {
         debug!("execute command to delete nft rule: {}", &remove_command);
 
         Ok(())
-    }
-
-    /// 清理过期规则
-    pub async fn cleanup_expired(&self) -> Result<Vec<String>> {
-        let now = Utc::now();
-        let mut expired_rules = Vec::new();
-        let mut rules_to_remove = Vec::new();
-
-        // 查找过期规则
-        {
-            let rules = self.rules.read().await;
-            for (rule_id, rule) in rules.iter() {
-                if let Action::Ban { seconds } = rule.rule_type {
-                    let duration = Duration::seconds(seconds as i64);
-                    let until = rule.created_at + duration;
-                    if until <= now {
-                        rules_to_remove.push((rule_id.clone(), rule.handle.clone()));
-                    }
-                }
-            }
-        }
-
-        // 移除过期规则
-        for (rule_id, handle) in rules_to_remove {
-            if let Some(handle) = handle {
-                if let Err(e) = self.remove_rule_by_handle(&handle).await {
-                    warn!("Failed to remove expired rule {}: {}", rule_id, e);
-                    continue;
-                }
-            }
-            self.rules.write().await.remove(&rule_id);
-            expired_rules.push(rule_id);
-        }
-
-        if !expired_rules.is_empty() {
-            info!("Removed {} expired rules", expired_rules.len());
-        }
-
-        Ok(expired_rules)
     }
 
     /// 获取所有活跃规则
@@ -561,7 +567,11 @@ impl Firewall {
             .values()
             .filter(|rule| {
                 if let Action::Ban { seconds } = rule.rule_type {
-                    let duration = Duration::seconds(seconds as i64);
+                    let duration = if let Some(seconds) = seconds {
+                        Duration::seconds(seconds as i64)
+                    } else {
+                        Duration::seconds(0)
+                    };
                     let until = Utc::now() + duration;
                     until <= Utc::now()
                 } else {
@@ -612,7 +622,9 @@ impl Firewall {
                 let rule = FirewallRule {
                     id: rule_ids[i].clone(),
                     ip,
-                    rule_type: Action::Ban { seconds },
+                    rule_type: Action::Ban {
+                        seconds: Some(seconds),
+                    },
                     created_at: Utc::now(),
                     handle: Some(format!("ban_{}_{}", ip, Utc::now().timestamp())),
                 };

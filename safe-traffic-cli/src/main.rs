@@ -46,7 +46,7 @@ enum Commands {
         ip: IpAddr,
         /// Duration in seconds
         #[arg(short, long)]
-        seconds: u64,
+        seconds: Option<u64>,
     },
     /// Remove a ban or limit rule by rule ID
     Unblock {
@@ -120,7 +120,12 @@ async fn main() -> Result<()> {
                 println!("IP banned successfully!");
                 println!("Rule ID: {}", rule_id);
                 println!("IP: {}", ip);
-                println!("Duration: {} seconds", seconds);
+                println!(
+                    "Duration: {} seconds",
+                    seconds
+                        .map(|s| s.to_string())
+                        .unwrap_or("infinity".to_string())
+                );
             }
             Err(e) => {
                 eprintln!("Failed to ban IP: {}", e);

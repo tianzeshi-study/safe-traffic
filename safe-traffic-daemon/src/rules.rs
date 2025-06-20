@@ -154,7 +154,11 @@ impl RuleEngine {
                                         .or_insert_with(|| vec![rule_id]);
                                 }
                                 Action::Ban { seconds } => {
-                                    debug!("intend to ban {} for {} seconds", ip, seconds);
+                                    debug!(
+                                        "intend to ban {} for {} seconds",
+                                        ip,
+                                        seconds.unwrap_or(0)
+                                    );
 
                                     let rule_id = fw.ban(ip, seconds).await?;
                                     self.handles
@@ -198,9 +202,11 @@ impl RuleEngine {
                         continue;
                     }
                     Action::Ban { seconds } => {
-                        if fw.is_expiration(&id, seconds).await {
-                            debug!("intend to unban {} because of expiration", ip);
-                            fw.unblock(&id).await?;
+                        if let Some(seconds) = seconds {
+                            if fw.is_expiration(&id, seconds).await {
+                                debug!("intend to unban {} because of expiration", ip);
+                                fw.unblock(&id).await?;
+                            }
                         }
                     }
                 }

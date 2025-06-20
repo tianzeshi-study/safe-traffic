@@ -76,13 +76,19 @@ pub enum Action {
         seconds: Option<u64>,
     },
     /// 封禁模式，参数：秒
-    Ban { seconds: u64 },
+    Ban { seconds: Option<u64> },
 }
 
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Action::Ban { seconds } => format!("ban {}s", seconds),
+            Action::Ban { seconds } => {
+                if let Some(seconds) = seconds {
+                    format!("ban {}s", seconds)
+                } else {
+                    "ban infinity".to_string()
+                }
+            }
             Action::RateLimit {
                 kbps,
                 burst,

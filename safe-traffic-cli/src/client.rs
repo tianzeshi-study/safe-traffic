@@ -50,7 +50,7 @@ impl TrafficClient {
         }
     }
 
-    pub async fn ban(&mut self, ip: IpAddr, seconds: u64) -> Result<String> {
+    pub async fn ban(&mut self, ip: IpAddr, seconds: Option<u64>) -> Result<String> {
         let request = Request::Ban { ip, seconds };
         match self.send_request(request).await? {
             Response::Success(ResponseData::Message(rule_id)) => Ok(rule_id),

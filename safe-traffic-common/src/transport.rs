@@ -15,15 +15,14 @@ pub enum Request {
         seconds: Option<u64>,
     },
     /// 封禁IP指定时长
-    Ban { ip: IpAddr, seconds: u64 },
+    Ban { ip: IpAddr, seconds: Option<u64> },
     /// 检查规则是否过期
     IsExpiration { rule_id: String, seconds: u64 },
     /// 解封指定规则ID
     Unblock { rule_id: String },
     /// 白名单
     Exclude { ip: IpAddr },
-    /// 清理过期规则
-    CleanupExpired,
+
     /// 获取所有活跃规则
     GetActiveRules,
     /// 获取系统规则
