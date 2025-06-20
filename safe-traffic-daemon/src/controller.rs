@@ -6,7 +6,7 @@ use safe_traffic_common::{
     config::{Action, Config, FamilyType, HookType, PolicyType},
     utils::FirewallRule,
 };
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ pub struct Firewall {
     pub rules: Arc<RwLock<HashMap<String, FirewallRule>>>,
     nft_available: bool,
     executor: Arc<NftExecutor>,
-    global_exclude: HashSet<IpAddr>,
+    global_exclude: Arc<RwLock<HashSet<IpAddr>>>,
 }
 
 #[allow(dead_code)]
@@ -43,7 +43,9 @@ impl Firewall {
         let hook = cfg.hook.clone().unwrap_or(HookType::Input);
         let priority = cfg.priority.clone().unwrap_or(0);
         let policy = cfg.policy.clone().unwrap_or(PolicyType::Accept);
-        let global_exclude = cfg.global_exclude.clone().unwrap_or(HashSet::new());
+        let global_exclude = Arc::new(RwLock::new(
+            cfg.global_exclude.clone().unwrap_or(HashSet::new()),
+        ));
 
         // 检查 nftables 是否可用
         let nft_available = crate::nft::check_nftables_available().await?;
@@ -526,11 +528,18 @@ impl Firewall {
         info!("Batch banned {} IPs until {}", rule_ids.len(), until);
         Ok(rule_ids)
     }
-    
-    pub fn is_excluded(&self, ip: &IpAddr) -> bool {
-self.global_exclude.contains(ip)
+
+    pub async fn is_excluded(&self, ip: &IpAddr) -> bool {
+        self.global_exclude.read().await.contains(ip)
     }
-    
+
+    pub async fn add_exclude(&self, ip: &IpAddr) -> Result<()> {
+        if self.global_exclude.write().await.insert(*ip) {
+            Ok(())
+        } else {
+            Err(anyhow!("fail to add {} to global exclude", ip))
+        }
+    }
 }
 
 /*

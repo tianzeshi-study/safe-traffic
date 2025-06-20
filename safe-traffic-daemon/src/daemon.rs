@@ -1,7 +1,4 @@
-use crate::{
-    controller::Firewall,
-    rules::RuleEngine,
-};
+use crate::{controller::Firewall, rules::RuleEngine};
 
 use anyhow::{Context, Result};
 use log::{debug, error, info};
@@ -21,10 +18,7 @@ pub struct TrafficDaemon {
 
 impl TrafficDaemon {
     /// 创建新的服务器实例
-    pub fn new(
-    firewall: Arc<Firewall>,
-    engine: Arc<RuleEngine>
-    ) -> Self {
+    pub fn new(firewall: Arc<Firewall>, engine: Arc<RuleEngine>) -> Self {
         Self {
             firewall,
             engine,
@@ -79,7 +73,11 @@ impl TrafficDaemon {
     }
 
     /// 处理单个客户端连接
-    async fn handle_connection(mut stream: UnixStream, firewall: Arc<Firewall>, engine: Arc<RuleEngine>) -> Result<()> {
+    async fn handle_connection(
+        mut stream: UnixStream,
+        firewall: Arc<Firewall>,
+        engine: Arc<RuleEngine>,
+    ) -> Result<()> {
         let mut buffer = vec![0u8; 8192]; // 增大缓冲区以处理更大的请求
 
         loop {
@@ -129,7 +127,11 @@ impl TrafficDaemon {
     }
 
     /// 处理客户端请求，为每个 Firewall 公开方法提供对应的 handler
-    async fn process_request(data: &[u8], firewall: &Arc<Firewall>, engine: &Arc<RuleEngine>) -> Result<Response> {
+    async fn process_request(
+        data: &[u8],
+        firewall: &Arc<Firewall>,
+        engine: &Arc<RuleEngine>,
+    ) -> Result<Response> {
         let request: Request =
             serde_json::from_slice(data).context("Failed to parse request JSON")?;
 
@@ -175,6 +177,19 @@ impl TrafficDaemon {
                 }
                 Err(e) => {
                     error!("Failed to unban rule {}: {}", rule_id, e);
+                    return Ok(Response::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
+
+            Request::Exclude { ip } => match firewall.add_exclude(&ip).await {
+                Ok(_) => {
+                    info!("Successfully exclude ip: {}", ip);
+                    ResponseData::Message(format!("Successfully excludeip: {}", ip))
+                }
+                Err(e) => {
+                    error!("Failed to exclude ip {}: {}", ip, e);
                     return Ok(Response::Error {
                         message: e.to_string(),
                     });
@@ -248,7 +263,7 @@ impl TrafficDaemon {
                     });
                 }
             },
-            
+
             Request::Stop => match engine.stop().await {
                 Ok(()) => {
                     info!("Successfully stop");
@@ -261,7 +276,7 @@ impl TrafficDaemon {
                     });
                 }
             },
-            
+
             Request::Pause => match engine.pause().await {
                 Ok(()) => {
                     info!("Successfully pause rule engine");
@@ -274,7 +289,7 @@ impl TrafficDaemon {
                     });
                 }
             },
-            
+
             Request::Resume => match engine.resume().await {
                 Ok(()) => {
                     info!("Successfully resume rule engine");
@@ -392,10 +407,7 @@ impl ServerBuilder {
     }
 
     pub fn build(self) -> TrafficDaemon {
-        let mut server = TrafficDaemon::new(
-        self.firewall,
-        self.engine,
-        );
+        let mut server = TrafficDaemon::new(self.firewall, self.engine);
 
         if let Some(path) = self.socket_path {
             server = server.with_socket_path(path);

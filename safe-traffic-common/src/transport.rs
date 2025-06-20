@@ -19,6 +19,8 @@ pub enum Request {
     IsExpiration { rule_id: String, seconds: u64 },
     /// 解封指定规则ID
     Unban { rule_id: String },
+    /// 白名单
+    Exclude { ip: IpAddr },
     /// 清理过期规则
     CleanupExpired,
     /// 获取所有活跃规则

@@ -51,6 +51,14 @@ enum Commands {
         #[arg(value_name = "RULE_ID")]
         rule_id: String,
     },
+
+    /// add exclude ip
+    Exclude {
+        /// ip to exclude
+        #[arg(value_name = "ip")]
+        ip: IpAddr,
+    },
+
     /// List all active firewall rules
     List,
     /// Ping the traffic daemon
@@ -123,6 +131,16 @@ async fn main() -> Result<()> {
             }
         },
 
+        Commands::Exclude { ip } => match client.exclude(ip.clone()).await {
+            Ok(()) => {
+                println!("exclude ip {} successfully!", ip);
+            }
+            Err(e) => {
+                eprintln!("Failed to exclude ip: {}", e);
+                std::process::exit(1);
+            }
+        },
+
         Commands::List => match client.get_active_rules().await {
             Ok(rules) => {
                 if let Some(rules) = rules {
@@ -168,7 +186,7 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
-        
+
         Commands::Stop => match client.stop().await {
             Ok(msg) => {
                 println!("{}", msg);
@@ -178,7 +196,7 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
-        
+
         Commands::Pause => match client.pause().await {
             Ok(msg) => {
                 println!("{}", msg);
@@ -188,8 +206,8 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
-        
-        Commands::Resume=> match client.resume().await {
+
+        Commands::Resume => match client.resume().await {
             Ok(msg) => {
                 println!("{}", msg);
             }
@@ -198,7 +216,6 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
-        
     }
 
     Ok(())

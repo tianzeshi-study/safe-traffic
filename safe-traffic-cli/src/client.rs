@@ -56,6 +56,14 @@ impl TrafficClient {
         }
     }
 
+    pub async fn exclude(&mut self, ip: IpAddr) -> Result<()> {
+        let request = Request::Exclude { ip };
+        match self.send_request(request).await? {
+            Response::Success(_) => Ok(()),
+            Response::Error { message } => Err(anyhow::anyhow!(message)),
+        }
+    }
+
     pub async fn get_active_rules(&mut self) -> Result<Option<Vec<FirewallRule>>> {
         let request = Request::GetActiveRules;
         let response = self.send_request(request).await?;
@@ -86,7 +94,7 @@ impl TrafficClient {
             _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
     }
-    
+
     pub async fn stop(&mut self) -> Result<String> {
         let request = Request::Stop;
         match self.send_request(request).await? {
@@ -95,7 +103,7 @@ impl TrafficClient {
             _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
     }
-    
+
     pub async fn pause(&mut self) -> Result<String> {
         let request = Request::Pause;
         match self.send_request(request).await? {
@@ -104,7 +112,7 @@ impl TrafficClient {
             _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
     }
-    
+
     pub async fn resume(&mut self) -> Result<String> {
         let request = Request::Resume;
         match self.send_request(request).await? {
@@ -113,7 +121,6 @@ impl TrafficClient {
             _ => Err(anyhow::anyhow!("Unexpected response format")),
         }
     }
-    
 }
 
 #[cfg(test)]
