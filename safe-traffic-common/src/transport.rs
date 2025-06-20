@@ -37,6 +37,10 @@ pub enum Request {
     Flush,
     ///  停止进程
     Stop,
+    /// 暂停规则检查
+    Pause,
+    /// 恢复规则检查
+    Resume,
 }
 
 /// 服务器响应类型

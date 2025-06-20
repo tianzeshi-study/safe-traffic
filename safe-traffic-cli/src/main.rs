@@ -59,6 +59,10 @@ enum Commands {
     Flush,
     /// stop daemon
     Stop,
+    /// pause updating rules  
+    Pause,
+    /// resume updating rules  
+    Resume,
 }
 
 #[tokio::main]
@@ -174,6 +178,27 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
+        
+        Commands::Pause => match client.pause().await {
+            Ok(msg) => {
+                println!("{}", msg);
+            }
+            Err(e) => {
+                eprintln!("Failed to pause: {}", e);
+                std::process::exit(1);
+            }
+        },
+        
+        Commands::Resume=> match client.resume().await {
+            Ok(msg) => {
+                println!("{}", msg);
+            }
+            Err(e) => {
+                eprintln!("Failed to resume: {}", e);
+                std::process::exit(1);
+            }
+        },
+        
     }
 
     Ok(())

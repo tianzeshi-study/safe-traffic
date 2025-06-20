@@ -185,77 +185,80 @@ impl RuleEngine {
     }
 
     /// 启动规则引擎主循环，支持暂停/恢复/停止
-    pub async fn start(&self, fw: Arc<Firewall>, check_interval: Duration) -> anyhow::Result<()> {
-        info!("RuleEngine starting...");
+pub async fn start(&self, fw: Arc<Firewall>, check_interval: Duration) -> anyhow::Result<()> {
+    info!("RuleEngine starting...");
 
-        // 创建控制信号通道
-        let (control_tx, mut control_rx) = mpsc::unbounded_channel::<ControlSignal>();
-        *self.signal_controller.control_tx.lock().await = Some(control_tx);
+    // 创建控制信号通道
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel::<ControlSignal>();
+    *self.signal_controller.control_tx.lock().await = Some(control_tx);
 
-        // 重置状态
-        self.signal_controller.state.store(true, Ordering::Relaxed);
-        self.signal_controller
-            .stop_flag
-            .store(false, Ordering::Relaxed);
+    // 重置状态
+    self.signal_controller.state.store(true, Ordering::Relaxed);
+    self.signal_controller
+        .stop_flag
+        .store(false, Ordering::Relaxed);
 
-        let mut interval = time::interval(check_interval);
+    let mut interval = time::interval(check_interval);
 
-        info!("RuleEngine started successfully");
+    info!("RuleEngine started successfully");
 
-        loop {
-            tokio::select! {
-                // 处理控制信号
-                signal = control_rx.recv() => {
-                    match signal {
-                        Some(ControlSignal::Pause) => {
-                            info!("RuleEngine pausing...");
-                            self.signal_controller.state.store(false, Ordering::Relaxed);
-                        }
-                        Some(ControlSignal::Resume) => {
-                            info!("RuleEngine resuming...");
-                            self.signal_controller.state.store(true, Ordering::Relaxed);
-                            self.signal_controller.resume_notify.notify_waiters();
-                        }
-                        Some(ControlSignal::Stop) => {
-                            info!("stopping RuleEngine...");
-                            self.signal_controller.stop_flag.store(true, Ordering::Relaxed);
-                            break;
-                        }
-                        None => {
-                            error!("Control channel closed unexpectedly");
-                            break;
-                        }
+    loop {
+        tokio::select! {
+            // 处理控制信号 - 给予更高优先级
+            signal = control_rx.recv() => {
+                dbg!(&signal);
+                match signal {
+                    Some(ControlSignal::Pause) => {
+                        info!("RuleEngine pausing...");
+                        self.signal_controller.state.store(false, Ordering::Relaxed);
                     }
-                }
-
-                // 定时器tick
-                _ = interval.tick() => {
-                    // 检查是否需要停止
-                    if self.signal_controller.stop_flag.load(Ordering::Relaxed) {
+                    Some(ControlSignal::Resume) => {
+                        info!("RuleEngine resuming...");
+                        self.signal_controller.state.store(true, Ordering::Relaxed);
+                        // 移除这里的notify_waiters调用，因为我们改用select模式
+                    }
+                    Some(ControlSignal::Stop) => {
+                        info!("stopping RuleEngine...");
+                        self.signal_controller.stop_flag.store(true, Ordering::Relaxed);
                         break;
                     }
-
-                    // 检查是否暂停
-                    if !self.signal_controller.state.load(Ordering::Relaxed) {
-                        debug!("RuleEngine is paused, waiting for resume signal...");
-                        self.signal_controller.resume_notify.notified().await;
-                        continue;
-                    }
-
-                    // 执行检查和应用规则
-                    match self.check_and_apply(Arc::clone(&fw)).await {
-                        Ok(_) => {}
-                        Err(e) => error!("check and apply failed: {}", e),
+                    None => {
+                        error!("Control channel closed unexpectedly");
+                        break;
                     }
                 }
             }
+
+            // 定时器tick - 只在运行状态下处理
+            _ = interval.tick(), if self.signal_controller.state.load(Ordering::Relaxed) => {
+                // 检查是否需要停止
+                if self.signal_controller.stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // 执行检查和应用规则
+                match self.check_and_apply(Arc::clone(&fw)).await {
+                    Ok(_) => {}
+                    Err(e) => error!("check and apply failed: {}", e),
+                }
+            }
+
+            // 在暂停状态下等待resume信号
+            _ = self.signal_controller.resume_notify.notified(), 
+              if !self.signal_controller.state.load(Ordering::Relaxed) => {
+                debug!("Resume notification received, but state will be checked in next loop iteration");
+                // 这个分支主要是为了在暂停状态下保持响应性
+                // 实际的状态变更由control_rx.recv()分支处理
+            }
         }
-
-        // 清理资源
-        info!("RuleEngine performing cleanup...");
-        *self.signal_controller.control_tx.lock().await = None;
-
-        info!("RuleEngine stopped gracefully");
-        Ok(())
     }
+
+    // 清理资源
+    info!("RuleEngine performing cleanup...");
+    *self.signal_controller.control_tx.lock().await = None;
+
+    info!("RuleEngine stopped gracefully");
+    Ok(())
+}
+
 }

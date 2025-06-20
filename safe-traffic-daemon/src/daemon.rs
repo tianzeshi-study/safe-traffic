@@ -252,10 +252,36 @@ impl TrafficDaemon {
             Request::Stop => match engine.stop().await {
                 Ok(()) => {
                     info!("Successfully stop");
-                    ResponseData::Message("stopped".to_string())
+                    ResponseData::Message("stopped successfully".to_string())
                 }
                 Err(e) => {
                     error!("Failed to stopp: {}", e);
+                    return Ok(Response::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
+            
+            Request::Pause => match engine.pause().await {
+                Ok(()) => {
+                    info!("Successfully pause rule engine");
+                    ResponseData::Message("pause Successfully".to_string())
+                }
+                Err(e) => {
+                    error!("Failed to pause: {}", e);
+                    return Ok(Response::Error {
+                        message: e.to_string(),
+                    });
+                }
+            },
+            
+            Request::Resume => match engine.resume().await {
+                Ok(()) => {
+                    info!("Successfully resume rule engine");
+                    ResponseData::Message("resume Successfully".to_string())
+                }
+                Err(e) => {
+                    error!("Failed to resume: {}", e);
                     return Ok(Response::Error {
                         message: e.to_string(),
                     });
