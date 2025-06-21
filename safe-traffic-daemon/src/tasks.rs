@@ -22,7 +22,7 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
         cfg.interface.clone(),
         stats,
         Duration::from_secs(cfg.monitor_interval.unwrap_or(1)),
-        executor,
+        executor.clone(),
     ));
     let daemon = Arc::new(TrafficDaemon::new(fw.clone(), engine.clone()));
 
@@ -37,11 +37,12 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
     let daemon_clone = daemon.clone();
 
     let monitor_task = tokio::spawn(async move { monitor_clone.start().await });
-
+    
+    let fw_clone = Arc::clone(&fw);
     let engine_task = tokio::spawn(async move {
         engine_clone
             .start(
-                fw,
+                fw_clone,
                 Duration::from_secs(cfg.rule_check_interval.unwrap_or(1)),
             )
             .await
@@ -68,10 +69,9 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
                 error!("Failed to stop rule engine: {}", e);
             }
 
-            // 停止监控器 (假设 TrafficMonitor 有 stop 方法)
+
             // monitor.stop();
 
-            // 停止守护进程 (假设 TrafficDaemon 有 stop 方法)
             // daemon.stop();
 
             // 等待所有任务完成

@@ -142,6 +142,44 @@ impl NftProcess {
             }
         }
     }
+    
+    async fn input_command(&mut self, command: &str) -> Result<()> {
+        if self.is_busy {
+            return Err(NftError::ProcessNotAvailable("Process is busy".to_string()).into());
+        }
+
+        if !self.is_alive() {
+            return Err(NftError::ProcessNotAvailable("Process is not alive".to_string()).into());
+        }
+
+        self.is_busy = true;
+        self.last_used = Utc::now();
+        self.command_count += 1;
+
+        // 设置命令执行超时
+        let result = timeout(
+            TokioDuration::from_secs(TIMEOUT_SEC),
+            self.do_input(command),
+        )
+        .await;
+
+        self.is_busy = false;
+
+        match result {
+            Ok(Ok(output)) => {
+                debug!("Successfully input  nft command: {}", command);
+                Ok(output)
+            }
+            Ok(Err(e)) => {
+                error!("NFT command failed: {} - Error: {}", command, e);
+                Err(e)
+            }
+            Err(_) => {
+                error!("NFT command timeout: {}", command);
+                Err(NftError::Timeout.into())
+            }
+        }
+    }
 
     /// 内部执行命令的实现
     async fn do_execute_internal(&mut self, command: &str) -> Result<String> {
@@ -182,7 +220,7 @@ impl NftProcess {
         Ok(out_content)
     }
 
-    pub async fn do_input(&mut self, command: &str) -> Result<()> {
+    async fn do_input(&mut self, command: &str) -> Result<()> {
         let full_command = format!("{}\n", command);
 
         // 发送命令
@@ -266,7 +304,6 @@ impl NftProcess {
     }
 
     /// 优雅关闭进程
-
     async fn shutdown(mut self) -> Result<()> {
         debug!(
             "Shutting down NFT process (commands executed: {})",
@@ -274,7 +311,7 @@ impl NftProcess {
         );
 
         // 尝试发送退出命令
-        self.do_input("quit").await.context("fail to write quit")?;
+        self.input_command("quit").await.context("fail to write quit")?;
 
         // self.do_input("quit")
         // .await
@@ -370,7 +407,8 @@ impl NftExecutor {
 
         result
     }
-    /// execute command without output  
+
+    /// 执行命令但不等待输出
     pub async fn input(&self, command: &str) -> Result<()> {
         if self.mock_mode {
             debug!("Mocking nft command execution: {}", command);
@@ -388,7 +426,7 @@ impl NftExecutor {
         let mut process = self.get_or_create_process().await?;
 
         // 执行命令
-        let result = process.do_input(command).await;
+        let result = process.input_command(command).await;
 
         // 将进程返回池中或销毁
         self.return_or_destroy_process(process).await;
@@ -409,7 +447,10 @@ impl NftExecutor {
             } else {
                 // 进程已死或需要回收，异步销毁
                 tokio::spawn(async move {
-                    let _ = process.shutdown().await;
+                    match  process.shutdown().await {
+                        Ok(_) => {},
+                        Err(e) => {error!("nft process shutdown fail: {:?}", e); }, 
+                    };
                 });
             }
         }
@@ -440,22 +481,29 @@ impl NftExecutor {
     /// 清理池中的所有进程
     pub async fn cleanup(&self) -> Result<()> {
         let mut pool = self.pool.lock().await;
-        let processes: Vec<_> = pool.drain(..).collect();
+        let mut processes: Vec<_> = pool.drain(..).collect();
         drop(pool);
 
         // 异步关闭所有进程
         let handles: Vec<_> = processes
             .into_iter()
-            .map(|process| {
+            .map(|mut process| {
                 tokio::spawn(async move {
-                    let _ = process.shutdown().await;
+                    if process.is_alive() && !process.is_busy{
+                    match process.shutdown().await {
+                        Ok(_) => {},
+                        Err(e) => {error!("shutdown nft fail: {}", e);},
+                    };
+                    } else {
+                    warn!("process not alive");
+                    } 
                 })
             })
             .collect();
 
         // 等待所有进程关闭
         for handle in handles {
-            let _ = handle.await;
+            handle.await?;
         }
 
         info!("NftExecutor pool cleaned up");

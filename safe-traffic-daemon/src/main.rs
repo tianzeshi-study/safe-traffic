@@ -53,11 +53,14 @@ async fn main() -> anyhow::Result<()> {
     let fw = Arc::new(controller::Firewall::new(&cfg, Arc::clone(&executor)).await?);
     // 启动流量监控与规则引擎
     tasks::run(cfg, fw.clone(), executor.clone()).await?;
-    // 等待终止信号（Ctrl+C）
-    // signal::ctrl_c().await?;
+
+
 
     fw.cleanup().await?;
-    // executor.cleanup().await?;
+
+    executor.input("delete table inet traffic_monitor").await?;
+    executor.cleanup().await?;
+    drop(executor);
 
     Ok(())
 }
