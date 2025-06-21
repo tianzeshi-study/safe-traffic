@@ -568,7 +568,7 @@ pub async fn check_nftables_available() -> Result<bool> {
             if status.success() {
                 // 检查是否有权限
                 match Command::new("nft")
-                    .args(&["list", "tables"])
+                    .args(["list", "tables"])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .status()

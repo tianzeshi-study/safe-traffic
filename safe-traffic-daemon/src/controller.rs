@@ -41,10 +41,10 @@ impl Firewall {
             .clone()
             .unwrap_or("traffic_input".to_string());
         let hook = cfg.hook.clone().unwrap_or(HookType::Input);
-        let priority = cfg.priority.clone().unwrap_or(0);
+        let priority = cfg.priority.unwrap_or(0);
         let policy = cfg.policy.clone().unwrap_or(PolicyType::Accept);
         let global_exclude = Arc::new(RwLock::new(
-            cfg.global_exclude.clone().unwrap_or(HashSet::new()),
+            cfg.global_exclude.clone().unwrap_or_default(),
         ));
 
         // 检查 nftables 是否可用
@@ -74,7 +74,6 @@ impl Firewall {
     }
 
     /// 检查 nftables 是否可用
-
     /// 初始化 nftables 表和链
     async fn init_table_and_chain(&self) -> Result<()> {
         let commands = vec![
@@ -202,14 +201,12 @@ impl Firewall {
                     } = rule.rule_type
                     {
                         let existing_until = rule.created_at + duration;
-                        if existing_until > Utc::now() {
-                            if existing_kbps == kbps && sec == Some(seconds) {
-                                debug!(
-                                    "IP {} has already been banned until {}, skipping",
-                                    ip, existing_until
-                                );
-                                return Ok(rule.id.clone());
-                            }
+                        if existing_until > Utc::now() && existing_kbps == kbps && sec == Some(seconds) {
+                            debug!(
+                                "IP {} has already been banned until {}, skipping",
+                                ip, existing_until
+                            );
+                            return Ok(rule.id.clone());
                         }
                     }
                 }
@@ -265,8 +262,7 @@ impl Firewall {
         let output_with_handle = self.executor.execute(&rule_cmd).await?;
         let nft_objs = parse_output(&output_with_handle).await?;
 
-        let nft_obj = nft_objs
-            .get(0)
+        let nft_obj = nft_objs.first()
             .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
 
         let handle = match nft_obj {
@@ -320,8 +316,7 @@ impl Firewall {
         let output_with_handle = self.create_ban_rule(ip).await?;
         let nft_objs = parse_output(&output_with_handle).await?;
 
-        let nft_obj = nft_objs
-            .get(0)
+        let nft_obj = nft_objs.first()
             .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
 
         let handle = match nft_obj {
@@ -369,8 +364,7 @@ impl Firewall {
         let output_with_handle = self.create_ban_rule(ip).await?;
         let nft_objs = parse_output(&output_with_handle).await?;
 
-        let nft_obj = nft_objs
-            .get(0)
+        let nft_obj = nft_objs.first()
             .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
 
         let handle = match nft_obj {
@@ -431,8 +425,8 @@ impl Firewall {
             // if rule.ip == ip {
             let expiration = rule.created_at + duration;
 
-            let result = now > expiration;
-            result
+            
+            now > expiration
         } else {
             false
         }
@@ -453,14 +447,14 @@ impl Firewall {
                 .ok_or_else(|| anyhow!("rule has no handle: {}", id))?
         };
 
-        let _unban_result = self.remove_rule_by_handle(&handle).await?;
+        self.remove_rule_by_handle(&handle).await?;
 
         let removed = {
             let mut rules = self.rules.write().await;
             rules.remove(id)
         };
 
-        if let Some(_) = removed {
+        if removed.is_some() {
             info!("Unblocked successful,\n remove rule: {}", id);
         } else {
             warn!("fail to remove rule, maybe not exist: {}", id);
@@ -479,7 +473,7 @@ impl Firewall {
             self.family, self.table_name, self.chain_name, handle
         );
 
-        let _unban_output = self.executor.input(&remove_command).await?;
+        self.executor.input(&remove_command).await?;
 
         debug!("execute command to delete nft rule: {}", &remove_command);
 

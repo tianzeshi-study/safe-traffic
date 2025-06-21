@@ -3,7 +3,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::net::IpAddr;
 use std::path::PathBuf;
-use tokio;
 
 // 假设这些类型在你的项目中已定义
 // 如果需要，请调整导入路径
@@ -144,7 +143,7 @@ async fn main() -> Result<()> {
             }
         },
 
-        Commands::Exclude { ip } => match client.exclude(ip.clone()).await {
+        Commands::Exclude { ip } => match client.exclude(ip).await {
             Ok(()) => {
                 println!("exclude ip {} successfully!", ip);
             }

@@ -182,7 +182,7 @@ mod tests {
     fn test_action_rate_limit_deserialize() {
         let s = r#"{ RateLimit = { kbps = 200 } }"#;
         // Wrap in a table to match Action::RateLimit structure
-        let action: Action = toml::from_str(&s).unwrap();
+        let action: Action = toml::from_str(s).unwrap();
         match action {
             Action::RateLimit {
                 kbps,

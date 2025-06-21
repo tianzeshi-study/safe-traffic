@@ -26,7 +26,7 @@ impl TrafficClient {
         let mut response_line = String::new();
         reader.read_line(&mut response_line).await?;
 
-        let response: Response = serde_json::from_str(&response_line.trim())?;
+        let response: Response = serde_json::from_str(response_line.trim())?;
         Ok(response)
     }
 

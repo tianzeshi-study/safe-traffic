@@ -39,6 +39,12 @@ pub struct SignalController {
     // 暂停/恢复通知
     pub resume_notify: Arc<Notify>,
 }
+impl Default for SignalController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SignalController {
     pub fn new() -> Self {
         Self {

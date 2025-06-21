@@ -411,7 +411,7 @@ impl TrafficMonitor {
         ip_stats: HashMap<IpAddr, IpTrafficStats>,
     ) -> anyhow::Result<()> {
         for (ip, new_stats) in ip_stats {
-            let mut stats = self.stats.entry(ip).or_insert_with(TrafficStats::default);
+            let mut stats = self.stats.entry(ip).or_default();
 
             // 计算增量
             let rx_delta = new_stats.rx_bytes.saturating_sub(stats.rx_bytes);
@@ -449,7 +449,7 @@ impl TrafficMonitor {
     #[allow(dead_code)]
     pub async fn cleanup_nftables_rules(&self) -> anyhow::Result<()> {
         warn!("intend to clean up monitor");
-        let _ = self
+        self
             .executor
             .input("delete table inet traffic_monitor")
             .await?;

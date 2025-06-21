@@ -112,10 +112,10 @@ impl RuleEngine {
         stream::iter(entries)
             .filter(|entry| {
                 let fw_origin = &fw_origin;
-                let ip = entry.0.clone();
+                let ip = entry.0;
                 async move { !fw_origin.is_excluded(&ip).await }
             })
-            .map(|entry| Ok::<_, anyhow::Error>(entry))
+            .map(Ok::<_, anyhow::Error>)
             .try_for_each_concurrent(CONCURRENT_SIZE, |(ip, win)| {
                 let fw = Arc::clone(&fw_origin);
                 async move {
