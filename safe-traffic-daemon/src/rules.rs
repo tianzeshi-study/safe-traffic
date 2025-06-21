@@ -191,7 +191,7 @@ impl RuleEngine {
                     Action::RateLimit {
                         kbps: _,
                         burst: _,
-                        seconds: seconds,
+                        seconds,
                     } => {
                         if let Some(seconds) = seconds {
                             if fw.is_expiration(&id, seconds).await {

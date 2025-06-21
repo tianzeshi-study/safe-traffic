@@ -168,7 +168,7 @@ mod tests {
     fn test_request_serialization() {
         let request = Request::Ban {
             ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
-            seconds: 3600,
+            seconds: Some(3600),
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -177,7 +177,7 @@ mod tests {
         match deserialized {
             Request::Ban { ip, seconds } => {
                 assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
-                assert_eq!(seconds, 3600);
+                assert_eq!(seconds, Some(3600));
             }
             _ => panic!("Unexpected request type"),
         }
