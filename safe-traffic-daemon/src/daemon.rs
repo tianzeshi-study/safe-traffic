@@ -16,6 +16,7 @@ pub struct TrafficDaemon {
     max_connections: usize,
 }
 
+#[allow(dead_code)]
 impl TrafficDaemon {
     /// 创建新的服务器实例
     pub fn new(firewall: Arc<Firewall>, engine: Arc<RuleEngine>) -> Self {
@@ -262,7 +263,7 @@ impl TrafficDaemon {
             Request::Stop => match engine.stop().await {
                 Ok(()) => {
                     info!("Successfully stop");
-                    ResponseData::Message("stopped successfully".to_string())
+                    ResponseData::Message("safe traffic daemon stopped successfully!".to_string())
                 }
                 Err(e) => {
                     error!("Failed to stopp: {}", e);
@@ -374,6 +375,7 @@ impl TrafficDaemon {
 }
 
 /// 服务器构建器，用于更灵活的配置
+#[allow(dead_code)]
 pub struct ServerBuilder {
     firewall: Arc<Firewall>,
     engine: Arc<RuleEngine>,
@@ -381,6 +383,7 @@ pub struct ServerBuilder {
     max_connections: Option<usize>,
 }
 
+#[allow(dead_code)]
 impl ServerBuilder {
     pub fn new(firewall: Arc<Firewall>, engine: Arc<RuleEngine>) -> Self {
         Self {

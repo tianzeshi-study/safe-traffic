@@ -360,7 +360,7 @@ impl Firewall {
 
         {
             let rules = self.rules.read().await;
-            if let Some(existing_rule) = rules.get(&rule_id) {
+            if let Some(_existing_rule) = rules.get(&rule_id) {
                 debug!("Rule {} already exists, skipping creation", rule_id);
                 return Ok(rule_id);
             }

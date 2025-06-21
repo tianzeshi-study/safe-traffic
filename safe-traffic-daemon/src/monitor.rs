@@ -448,17 +448,14 @@ impl TrafficMonitor {
     /// 清理 nftables 规则
     #[allow(dead_code)]
     pub async fn cleanup_nftables_rules(&self) -> anyhow::Result<()> {
-        warn!("intend to clean up monitor"); 
-        let result1  = self
+        warn!("intend to clean up monitor");
+        let _ = self
             .executor
             .input("delete table inet traffic_monitor")
             .await?;
-            
-            let result  = self
-            .executor
-            .execute("list tables")
-            .await?;
-            dbg!(&result1, &result);
+
+        let _ = self.executor.execute("list tables").await?;
+
         Ok(())
     }
 }

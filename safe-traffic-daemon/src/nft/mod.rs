@@ -142,7 +142,7 @@ impl NftProcess {
             }
         }
     }
-    
+
     async fn input_command(&mut self, command: &str) -> Result<()> {
         if self.is_busy {
             return Err(NftError::ProcessNotAvailable("Process is busy".to_string()).into());
@@ -311,7 +311,9 @@ impl NftProcess {
         );
 
         // 尝试发送退出命令
-        self.input_command("quit").await.context("fail to write quit")?;
+        self.input_command("quit")
+            .await
+            .context("fail to write quit")?;
 
         // self.do_input("quit")
         // .await
@@ -447,9 +449,11 @@ impl NftExecutor {
             } else {
                 // 进程已死或需要回收，异步销毁
                 tokio::spawn(async move {
-                    match  process.shutdown().await {
-                        Ok(_) => {},
-                        Err(e) => {error!("nft process shutdown fail: {:?}", e); }, 
+                    match process.shutdown().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("nft process shutdown fail: {:?}", e);
+                        }
                     };
                 });
             }
@@ -481,7 +485,7 @@ impl NftExecutor {
     /// 清理池中的所有进程
     pub async fn cleanup(&self) -> Result<()> {
         let mut pool = self.pool.lock().await;
-        let mut processes: Vec<_> = pool.drain(..).collect();
+        let processes: Vec<_> = pool.drain(..).collect();
         drop(pool);
 
         // 异步关闭所有进程
@@ -489,14 +493,16 @@ impl NftExecutor {
             .into_iter()
             .map(|mut process| {
                 tokio::spawn(async move {
-                    if process.is_alive() && !process.is_busy{
-                    match process.shutdown().await {
-                        Ok(_) => {},
-                        Err(e) => {error!("shutdown nft fail: {}", e);},
-                    };
+                    if process.is_alive() && !process.is_busy {
+                        match process.shutdown().await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!("shutdown nft fail: {}", e);
+                            }
+                        };
                     } else {
-                    warn!("process not alive");
-                    } 
+                        warn!("process not alive");
+                    }
                 })
             })
             .collect();

@@ -37,7 +37,7 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
     let daemon_clone = daemon.clone();
 
     let monitor_task = tokio::spawn(async move { monitor_clone.start().await });
-    
+
     let fw_clone = Arc::clone(&fw);
     let engine_task = tokio::spawn(async move {
         engine_clone
@@ -83,7 +83,7 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
         }
 
 
-        // 或者等待某个任务自然结束
+
 
         result = monitor_task => {
             match result {

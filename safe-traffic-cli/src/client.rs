@@ -78,11 +78,10 @@ impl TrafficClient {
     pub async fn get_active_rules(&mut self) -> Result<Option<Vec<FirewallRule>>> {
         let request = Request::GetActiveRules;
         let response = self.send_request(request).await?;
-        dbg!(&response);
 
         match response {
             Response::Success(ResponseData::RuleList(rules)) => Ok(Some(rules)),
-            Response::Success(ResponseData::StringList(rules)) => Ok(None),
+            Response::Success(ResponseData::StringList(_rules)) => Ok(None),
             Response::Error { message } => Err(anyhow::anyhow!(message)),
             _ => Err(anyhow::anyhow!("Unexpected response format")),
         }

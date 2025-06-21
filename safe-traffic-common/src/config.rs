@@ -187,7 +187,7 @@ mod tests {
             Action::RateLimit {
                 kbps,
                 burst: _burst,
-                seconds: _second
+                seconds: _second,
             } => assert_eq!(kbps, 200),
             _ => panic!("Expected RateLimit variant"),
         }
@@ -199,7 +199,9 @@ mod tests {
         let s = r#"{ Ban = { seconds = 456 } }"#;
         let action: Action = toml::from_str(s).unwrap();
         match action {
-            Action::Ban { seconds: Some(seconds) } => assert_eq!(seconds, 456),
+            Action::Ban {
+                seconds: Some(seconds),
+            } => assert_eq!(seconds, 456),
             _ => panic!("Expected Ban variant"),
         }
     }
@@ -218,7 +220,7 @@ mod tests {
             Action::RateLimit {
                 kbps,
                 burst: _burst,
-                seconds: _seconds
+                seconds: _seconds,
             } => assert_eq!(kbps, 200),
             _ => panic!("Expected RateLimit action"),
         }
@@ -258,7 +260,9 @@ mod tests {
         assert_eq!(r0.window_secs, 10);
         assert_eq!(r0.threshold_bps, 500);
         match r0.action {
-            Action::Ban { seconds: Some(seconds) } => assert_eq!(seconds, 60),
+            Action::Ban {
+                seconds: Some(seconds),
+            } => assert_eq!(seconds, 60),
             _ => panic!("Expected Ban action"),
         }
         // Second rule check
@@ -269,7 +273,7 @@ mod tests {
             Action::RateLimit {
                 kbps,
                 burst: _burst,
-                seconds: _seconds
+                seconds: _seconds,
             } => assert_eq!(kbps, 300),
             _ => panic!("Expected RateLimit action"),
         }

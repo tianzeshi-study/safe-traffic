@@ -54,11 +54,10 @@ async fn main() -> anyhow::Result<()> {
     // 启动流量监控与规则引擎
     tasks::run(cfg, fw.clone(), executor.clone()).await?;
 
-
-
     fw.cleanup().await?;
 
     executor.input("delete table inet traffic_monitor").await?;
+    // tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     executor.cleanup().await?;
     drop(executor);
 

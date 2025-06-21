@@ -258,7 +258,12 @@ mod tests {
 
         let cli = Cli::try_parse_from(args).unwrap();
         match cli.command {
-            Commands::Limit { ip, kbps, burst, seconds: _seconds} => {
+            Commands::Limit {
+                ip,
+                kbps,
+                burst,
+                seconds: _seconds,
+            } => {
                 assert_eq!(ip.to_string(), "192.168.1.1");
                 assert_eq!(kbps, 1000);
                 assert_eq!(burst, Some(2000));

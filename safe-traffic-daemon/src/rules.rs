@@ -51,6 +51,7 @@ impl RuleEngine {
     }
 
     /// 获取当前运行状态
+    #[allow(dead_code)]
     pub async fn get_state(&self) -> RunState {
         self.signal_controller.get_state().await
     }
@@ -238,7 +239,7 @@ impl RuleEngine {
             tokio::select! {
                 // 处理控制信号 - 给予更高优先级
                 signal = control_rx.recv() => {
-                    dbg!(&signal);
+
                     match signal {
                         Some(ControlSignal::Pause) => {
                             info!("RuleEngine pausing...");
