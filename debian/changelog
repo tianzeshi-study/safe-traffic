@@ -1,0 +1,5 @@
+safe-traffic (0.2.0-1) UNRELEASED; urgency=medium
+
+  * Initial release. (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+
+ -- root <tianzeshi_study@outlook.com>  Tue, 08 Jul 2025 16:13:16 +0800

@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release
+
+# override_dh_auto_install:
+	# mkdir -p debian/safe-traffic/usr/bin
+	# mkdir -p debian/safe-traffic/usr/sbin
+	# mkdir -p debian/safe-traffic/etc/systemd/system/
+	# mkdir -p debian/safe-traffic/etc/safe-traffic/
+
+	# cp target/release/safe-traffic-daemon  debian/safe-traffic/usr/sbin/
+	# cp target/release/safe-traffic-cli	debian/safe-traffic/usr/bin/
+	# cp debian/safe-traffic.service			debian/safe-traffic/etc/systemd/system/
+	# cp example.toml debian/safe-traffic/etc/safe-traffic/default.toml
+override_dh_installsystemd:
+	dh_installsystemd --name=safe-traffic.service

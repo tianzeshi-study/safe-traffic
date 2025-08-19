@@ -1,0 +1,4 @@
+target/release/safe-traffic-daemon  usr/sbin/
+target/release/safe-traffic-cli usr/bin/
+example.toml etc/safe-traffic/
+/debian/safe-traffic.service	lib/systemd/system/
