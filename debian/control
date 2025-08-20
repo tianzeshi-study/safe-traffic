@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: tianze <tianzeshi_study@outlook.com>
 Rules-Requires-Root: no
 Build-Depends:
- debhelper-compat (= 13),
+ debhelper-compat (= 13),cargo, rustc
 Standards-Version: 4.6.2
 Homepage: <https://github.com/tianzeshi-study/safe-traffic/ >
 #Vcs-Browser: https://salsa.debian.org/debian/safe-traffic
