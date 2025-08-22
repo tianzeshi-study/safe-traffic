@@ -41,10 +41,13 @@ pub enum NftError {
 impl NftProcess {
     /// 创建新的 nft 进程
     async fn new() -> Result<Self> {
+        let mut temp_path: std::path::PathBuf = std::env::temp_dir();
+        temp_path.push("nft-stderr.log");
+
         let err_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open("nft-stderr.log")
+            .open(&temp_path)
             .context("open log file fail")?;
 
         let mut child = Command::new("nft")

@@ -75,10 +75,10 @@ impl RuleEngine {
     pub async fn check_and_apply(&self, fw_origin: Arc<Firewall>) -> anyhow::Result<()> {
         let now = Utc::now();
         // 遍历每个 IP 的最新流量
-        let entries: Vec<_> = self
+        let ips: Vec<IpAddr> = self
             .stats
             .iter()
-            // .filter(|entry| !fw_origin.is_excluded(entry.key()))
+            // .filter(|entry| !fw_origin.is_excluded(entry.key()).await)
             .map(|entry| {
                 let bps = match fw_origin.hook {
                     HookType::Input => entry.value().rx_delta,
@@ -95,28 +95,29 @@ impl RuleEngine {
                 if (now - win.last_ts).num_seconds() >= 1 {
                     win.pos = (win.pos + 1) % win.buffer.len();
                     let pos = win.pos;
+                    println!("bps: {}, ip: {}", bps, entry.key());
                     win.buffer[pos] = bps;
                     win.last_ts = now;
                 }
                 let v = win.value().clone();
-                (*entry.key(), v)
+                *entry.key()
             })
             .collect();
 
         debug!(
             "starting checking rule: stats entries count: {}",
-            entries.len()
+            ips.len()
         );
 
         // 异步并发处理
-        stream::iter(entries)
-            .filter(|entry| {
+        stream::iter(ips)
+            .filter(|ip| {
                 let fw_origin = &fw_origin;
-                let ip = entry.0;
+                let ip = ip.clone();
                 async move { !fw_origin.is_excluded(&ip).await }
             })
             .map(Ok::<_, anyhow::Error>)
-            .try_for_each_concurrent(CONCURRENT_SIZE, |(ip, win)| {
+            .try_for_each_concurrent(CONCURRENT_SIZE, |ip| {
                 let fw = Arc::clone(&fw_origin);
                 async move {
                     // 对每条规则进行检测
@@ -126,16 +127,53 @@ impl RuleEngine {
                             continue;
                         }
 
+                        
                         let window_size = rule.window_secs as usize;
                         // 计算滑动窗口内总流量
+                        let win = if let Some(win) = self.windows.get(&ip) {
+                            win
+                        } else {
+                            continue;
+                        };
                         let sum: u64 = win
                             .buffer
                             .iter()
                             .cycle()
-                            .skip((win.pos + win.buffer.len() - window_size) % win.buffer.len())
+                            .skip({
+                            let skip = (win.pos + win.buffer.len() - window_size + 1) % win.buffer.len();
+                            print!("skip: {}", skip);
+                            skip
+                            })
                             .take(window_size)
                             .sum();
                         let avg_bps = sum / rule.window_secs;
+                        
+                        let (rules_num, removed_rules_num) = self.clean_expiration_rules(rule, ip, Arc::clone(&fw))
+                            .await?; 
+
+                        if rules_num as i32>= -1{
+                            println!(" ip: {} \n average bps: {}, win buffer: {:?}, \n &win.buffer.len : {} \n, win.pos: {}", ip, avg_bps, &win.buffer, &win.buffer.len(), win.pos);
+
+                            let total_sum: u64 = win
+                            .buffer
+                            .iter()
+                            .sum();
+                            
+                            if total_sum == 0 {
+                            // self.stats.remove(&ip);
+                            // self.windows.remove(&ip);
+                            // continue
+                        }
+
+                        }
+
+                        
+                        // if avg_bps == 0 {
+                            // self.stats.remove(&ip);
+                            // self.windows.remove(&ip);
+                            // continue
+                        // }
+                        
                         // 超过阈值 => 执行动作
                         debug!("{} average bps: {}", &ip, &avg_bps);
                         if avg_bps > rule.threshold_bps {
@@ -170,8 +208,7 @@ impl RuleEngine {
                             }
                         }
 
-                        self.clean_expiration_rules(rule, ip, Arc::clone(&fw))
-                            .await?;
+
                     }
                     Ok(())
                 }
@@ -185,8 +222,11 @@ impl RuleEngine {
         rule: &Rule,
         ip: IpAddr,
         fw: Arc<Firewall>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(usize, usize)> {
+        let mut rules_num = 0;
+        let mut removed_rules_num = 0;
         if let Some(ids) = self.handles.get(&ip) {
+            rules_num += ids.len();
             for id in ids.clone() {
                 match rule.action {
                     Action::RateLimit {
@@ -198,15 +238,16 @@ impl RuleEngine {
                             if fw.is_expiration(&id, seconds).await {
                                 debug!("intend to remove limit rule {} because of expiration", ip);
                                 fw.unblock(&id).await?;
+                                removed_rules_num +=1;
                             }
                         }
-                        continue;
                     }
                     Action::Ban { seconds } => {
                         if let Some(seconds) = seconds {
                             if fw.is_expiration(&id, seconds).await {
                                 debug!("intend to unban {} because of expiration", ip);
                                 fw.unblock(&id).await?;
+                                removed_rules_num +=1;
                             }
                         }
                     }
@@ -214,7 +255,7 @@ impl RuleEngine {
             }
         }
 
-        Ok(())
+        Ok((rules_num, removed_rules_num))
     }
 
     /// 启动规则引擎主循环，支持暂停/恢复/停止
