@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fmt, fs, net::IpAddr, path::Path};
+use std::{
+    collections::HashSet, 
+    fmt, 
+    fs, 
+    net::IpAddr, 
+    path::Path,
+    hash::{Hash,Hasher}
+};
 
 /// hook type , input or output
 #[derive(Deserialize, Debug, Clone)]
@@ -67,7 +74,7 @@ impl fmt::Display for FamilyType {
 }
 
 /// 单条规则动作类型：限速或封禁
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
     /// 限速模式，参数：kbit/s
     RateLimit {
@@ -125,6 +132,26 @@ pub struct Rule {
     excluded_ips: Option<HashSet<IpAddr>>,
 }
 
+impl PartialEq for Rule {
+    fn eq(&self, other: &Self) -> bool {
+        self.window_secs == other.window_secs
+            && self.threshold_bps == other.threshold_bps
+            && self.action == other.action
+    }
+}
+
+impl Eq for Rule {}
+
+// 手动实现 Hash（忽略 excluded_ips）
+impl Hash for Rule {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.window_secs.hash(state);
+        self.threshold_bps.hash(state);
+        self.action.hash(state);
+    }
+}
+
+
 impl Rule {
     pub fn is_excluded(&self, ip: &IpAddr) -> bool {
         if let Some(excluded_ips) = &self.excluded_ips {
@@ -154,7 +181,7 @@ pub struct Config {
     pub executor_max_age_secs: Option<i64>,   // 默认 300 秒
     pub executor_max_commands: Option<usize>, // 默认 100 条命令
     /// 规则列表
-    pub rules: Vec<Rule>,
+    pub rules: HashSet<Rule>,
     pub global_exclude: Option<HashSet<IpAddr>>,
 }
 

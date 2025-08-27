@@ -12,6 +12,7 @@ use std::{
     net::IpAddr,
     sync::{atomic::Ordering, Arc},
     time::Duration,
+    collections::HashSet,
 };
 use tokio::{sync::mpsc, time};
 
@@ -27,11 +28,12 @@ struct Window {
     pos: usize,
     /// 上次更新时间
     last_ts: DateTime<Utc>,
+    remove_marker: usize,
 }
 
 /// 规则引擎管理所有 IP 的窗口并执行动作
 pub struct RuleEngine {
-    rules: Vec<Rule>,
+    rules: HashSet<Rule>,
     stats: Arc<DashMap<IpAddr, TrafficStats>>,
     handles: DashMap<IpAddr, Vec<String>>,
     windows: DashMap<IpAddr, Window>,
@@ -40,7 +42,7 @@ pub struct RuleEngine {
 
 impl RuleEngine {
     /// 新建实例
-    pub fn new(rules: Vec<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
+    pub fn new(rules: HashSet<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
         RuleEngine {
             rules,
             stats,
@@ -89,6 +91,7 @@ impl RuleEngine {
                     buffer: vec![0; MAX_WINDOW_BUFFER], // 最多支持 60 秒窗口
                     pos: 0,
                     last_ts: now,
+                    remove_marker: 0,
                 });
 
                 // 如果超过 1 秒，推进循环缓冲
@@ -99,7 +102,7 @@ impl RuleEngine {
                     win.buffer[pos] = bps;
                     win.last_ts = now;
                 }
-                let v = win.value().clone();
+
                 *entry.key()
             })
             .collect();
@@ -129,12 +132,12 @@ impl RuleEngine {
 
                         
                         let window_size = rule.window_secs as usize;
-                        // 计算滑动窗口内总流量
                         let win = if let Some(win) = self.windows.get(&ip) {
                             win
                         } else {
                             continue;
                         };
+                        // 计算滑动窗口内总流量
                         let sum: u64 = win
                             .buffer
                             .iter()
@@ -334,4 +337,10 @@ impl RuleEngine {
         info!("RuleEngine stopped gracefully");
         Ok(())
     }
+    
+    // pub async fn add_rule(mut self, rule: Rule) ->anyhow::Result<()> {
+        // self.rules.push(rule);
+        
+        // Ok(())
+    // }
 }
