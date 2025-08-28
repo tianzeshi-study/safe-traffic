@@ -32,6 +32,16 @@ struct Window {
     remove_marker: AtomicUsize,
 }
 
+impl Window {
+    async fn aging(&self) {
+        self.remove_marker.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    async fn should_remove(&self) -> bool {
+        self.remove_marker.load(Ordering::Relaxed) == MAX_REMOVE_MARKER
+    }
+}
+
 /// 规则引擎管理所有 IP 的窗口并执行动作
 pub struct RuleEngine {
     rules: DashSet<Rule>,
@@ -135,11 +145,17 @@ impl RuleEngine {
 
                         
                         let window_size = rule.window_secs as usize;
-                        let win = if let Some(win) = self.windows.get(&ip) {
-                            win
-                        } else {
-                            continue;
-                        };
+                        // let win = if let Some(win) = self.windows.get(&ip) {
+                            // win
+                        // } else {
+                            // continue;
+                        // };
+                        let entry = if let dashmap::mapref::entry::Entry::Occupied(mut entry) = self.windows.entry(ip) {
+        entry
+    } else {
+        continue;
+    };
+    let win = entry.get();
                         // 计算滑动窗口内总流量
                         let sum: u64 = win
                             .buffer
@@ -158,7 +174,7 @@ impl RuleEngine {
                             .await?; 
 
                         if rules_num == 0{
-                            println!(" ip: {} \n average bps: {}, win buffer: {:?}, \n &win.buffer.len : {} \n, win.pos: {}", ip, avg_bps, &win.buffer, &win.buffer.len(), win.pos);
+                            // println!(" ip: {} \n average bps: {}, win buffer: {:?}, \n &win.buffer.len : {} \n, win.pos: {}", ip, avg_bps, &win.buffer, &win.buffer.len(), win.pos);
                             
 
                             let total_sum: u64 = win
@@ -167,10 +183,18 @@ impl RuleEngine {
                             .sum();
                             
                             if total_sum == 0 {
-                                win.remove_marker.fetch_add(1, Ordering::Relaxed);
+                                // win.remove_marker.fetch_add(1, Ordering::Relaxed);
+                                // win.remove_marker.load(Ordering::Relaxed);
+// win.remove_marker.fetch_add(1, Ordering::Relaxed);
                                 
-                                if win.remove_marker.load(Ordering::Relaxed) == MAX_REMOVE_MARKER {
-                                    self.windows.remove(&ip);
+                                // if win.remove_marker.load(Ordering::Relaxed) == MAX_REMOVE_MARKER {
+
+
+                                    win.aging().await;
+                                    if win.should_remove().await {
+                                        info!("clean window of IP: {}", ip);
+                                        entry.remove_entry();
+                                    // self.windows.remove(&ip);
                             // self.stats.remove(&ip);
                                 }
                             // continue
