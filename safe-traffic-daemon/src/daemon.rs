@@ -159,6 +159,7 @@ impl TrafficDaemon {
 
             Request::Ban { ip, seconds } => match firewall.ban(ip, seconds).await {
                 Ok(rule_id) => {
+                    engine.add_ban_rule_by_hand(seconds, None, None).await?;
                     let seconds: String = seconds
                         .map(|s| s.to_string())
                         .unwrap_or("infinity".to_string());

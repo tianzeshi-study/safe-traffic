@@ -129,7 +129,18 @@ pub struct Rule {
     pub threshold_bps: u64,
     /// 触发动作
     pub action: Action,
-    excluded_ips: Option<HashSet<IpAddr>>,
+    pub excluded_ips: Option<HashSet<IpAddr>>,
+}
+
+impl Default for Rule {
+    fn default() -> Self {
+        Rule {
+            window_secs: 10,
+            threshold_bps: u64::MAX,
+            action: Action::Ban { seconds: None },
+            excluded_ips: None,
+        }
+    }
 }
 
 impl PartialEq for Rule {

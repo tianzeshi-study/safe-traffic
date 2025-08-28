@@ -5,22 +5,23 @@ use safe_traffic_common::{
 };
 
 use chrono::{DateTime, Utc};
-use dashmap::DashMap;
+use dashmap::{DashMap,DashSet};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use log::{debug, error, info};
 use std::{
     net::IpAddr,
-    sync::{atomic::Ordering, Arc},
+    sync::{atomic::{Ordering, AtomicUsize}, Arc},
     time::Duration,
     collections::HashSet,
 };
 use tokio::{sync::mpsc, time};
 
 const MAX_WINDOW_BUFFER: usize = 60;
+const MAX_REMOVE_MARKER: usize = 60;
 const CONCURRENT_SIZE: usize = 10;
 
 /// 单 IP 的滑动窗口记录
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Window {
     /// 最近 bytes 的循环缓冲
     buffer: Vec<u64>,
@@ -28,12 +29,12 @@ struct Window {
     pos: usize,
     /// 上次更新时间
     last_ts: DateTime<Utc>,
-    remove_marker: usize,
+    remove_marker: AtomicUsize,
 }
 
 /// 规则引擎管理所有 IP 的窗口并执行动作
 pub struct RuleEngine {
-    rules: HashSet<Rule>,
+    rules: DashSet<Rule>,
     stats: Arc<DashMap<IpAddr, TrafficStats>>,
     handles: DashMap<IpAddr, Vec<String>>,
     windows: DashMap<IpAddr, Window>,
@@ -43,6 +44,8 @@ pub struct RuleEngine {
 impl RuleEngine {
     /// 新建实例
     pub fn new(rules: HashSet<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
+        let rules = rules.into_iter().collect::<DashSet<Rule>>(); 
+        
         RuleEngine {
             rules,
             stats,
@@ -91,14 +94,14 @@ impl RuleEngine {
                     buffer: vec![0; MAX_WINDOW_BUFFER], // 最多支持 60 秒窗口
                     pos: 0,
                     last_ts: now,
-                    remove_marker: 0,
+                    remove_marker: AtomicUsize::new(0),
                 });
 
                 // 如果超过 1 秒，推进循环缓冲
                 if (now - win.last_ts).num_seconds() >= 1 {
                     win.pos = (win.pos + 1) % win.buffer.len();
                     let pos = win.pos;
-                    println!("bps: {}, ip: {}", bps, entry.key());
+                    // println!("bps: {}, ip: {}", bps, entry.key());
                     win.buffer[pos] = bps;
                     win.last_ts = now;
                 }
@@ -124,7 +127,7 @@ impl RuleEngine {
                 let fw = Arc::clone(&fw_origin);
                 async move {
                     // 对每条规则进行检测
-                    for rule in &self.rules {
+                    for rule in self.rules.clone() {
                         if rule.is_excluded(&ip) {
                             debug!("skipping excluded IP: {}", ip);
                             continue;
@@ -144,18 +147,19 @@ impl RuleEngine {
                             .cycle()
                             .skip({
                             let skip = (win.pos + win.buffer.len() - window_size + 1) % win.buffer.len();
-                            print!("skip: {}", skip);
+
                             skip
                             })
                             .take(window_size)
                             .sum();
                         let avg_bps = sum / rule.window_secs;
                         
-                        let (rules_num, removed_rules_num) = self.clean_expiration_rules(rule, ip, Arc::clone(&fw))
+                        let (rules_num, removed_rules_num) = self.clean_expiration_rules(&rule, ip, Arc::clone(&fw))
                             .await?; 
 
-                        if rules_num as i32>= -1{
+                        if rules_num == 0{
                             println!(" ip: {} \n average bps: {}, win buffer: {:?}, \n &win.buffer.len : {} \n, win.pos: {}", ip, avg_bps, &win.buffer, &win.buffer.len(), win.pos);
+                            
 
                             let total_sum: u64 = win
                             .buffer
@@ -163,8 +167,12 @@ impl RuleEngine {
                             .sum();
                             
                             if total_sum == 0 {
+                                win.remove_marker.fetch_add(1, Ordering::Relaxed);
+                                
+                                if win.remove_marker.load(Ordering::Relaxed) == MAX_REMOVE_MARKER {
+                                    self.windows.remove(&ip);
                             // self.stats.remove(&ip);
-                            // self.windows.remove(&ip);
+                                }
                             // continue
                         }
 
@@ -338,9 +346,26 @@ impl RuleEngine {
         Ok(())
     }
     
-    // pub async fn add_rule(mut self, rule: Rule) ->anyhow::Result<()> {
-        // self.rules.push(rule);
-        
-        // Ok(())
-    // }
+    pub async fn add_ban_rule_by_hand(
+    &self, 
+    seconds: Option<u64>,
+    window_secs: Option<u64>,
+threshold_bps: Option<u64>,
+) ->anyhow::Result<()> {
+            let mut rule = Rule {
+        action: Action::Ban { seconds: seconds },
+        ..Default::default()  // 其他字段保持默认
+    };
+    if let Some(window_secs) = window_secs{
+        rule.window_secs = window_secs;
+    };
+    if let Some(threshold_bps) = threshold_bps {
+        rule.threshold_bps = threshold_bps;
+    };
+        if self.rules.insert(rule) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("fail to add rule"))
+        }
+            }
 }
