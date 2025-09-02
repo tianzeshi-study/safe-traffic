@@ -1,4 +1,4 @@
-use crate::nft::{parse_output, NftError, NftExecutor, NftObject};
+use crate::nft::{get_parsed_handle, NftError, NftExecutor, NftObject};
 use anyhow::{anyhow, Result};
 use chrono::{Duration, Utc};
 use log::{debug, info, warn};
@@ -43,9 +43,7 @@ impl Firewall {
         let hook = cfg.hook.clone().unwrap_or(HookType::Input);
         let priority = cfg.priority.unwrap_or(0);
         let policy = cfg.policy.clone().unwrap_or(PolicyType::Accept);
-        let global_exclude = Arc::new(RwLock::new(
-            cfg.global_exclude.clone().unwrap_or_default(),
-        ));
+        let global_exclude = Arc::new(RwLock::new(cfg.global_exclude.clone().unwrap_or_default()));
 
         // 检查 nftables 是否可用
         let nft_available = crate::nft::check_nftables_available().await?;
@@ -201,7 +199,10 @@ impl Firewall {
                     } = rule.rule_type
                     {
                         let existing_until = rule.created_at + duration;
-                        if existing_until > Utc::now() && existing_kbps == kbps && sec == Some(seconds) {
+                        if existing_until > Utc::now()
+                            && existing_kbps == kbps
+                            && sec == Some(seconds)
+                        {
                             debug!(
                                 "IP {} has already been banned until {}, skipping",
                                 ip, existing_until
@@ -260,24 +261,7 @@ impl Firewall {
         // self.executor.execute(&rule_cmd).await?;
         // let output_with_handle = self.create_ban_rule(ip).await?;
         let output_with_handle = self.executor.execute(&rule_cmd).await?;
-        let nft_objs = parse_output(&output_with_handle).await?;
-
-        let nft_obj = nft_objs.first()
-            .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
-
-        let handle = match nft_obj {
-            NftObject::Add(obj) => obj
-                .get_handle()
-                .await
-                .ok_or_else(|| anyhow!("fail to get "))?
-                .to_string(),
-            NftObject::Other(other) => {
-                return Err(anyhow!("parse output error: {:?}", other));
-            }
-            _ => {
-                return Err(anyhow!("parse output error: {:?}", nft_obj));
-            }
-        };
+        let handle = get_parsed_handle(output_with_handle).await?;
 
         Ok(handle)
     }
@@ -314,24 +298,7 @@ impl Firewall {
         }
 
         let output_with_handle = self.create_ban_rule(ip).await?;
-        let nft_objs = parse_output(&output_with_handle).await?;
-
-        let nft_obj = nft_objs.first()
-            .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
-
-        let handle = match nft_obj {
-            NftObject::Add(obj) => obj
-                .get_handle()
-                .await
-                .ok_or_else(|| anyhow!("fail to get "))?
-                .to_string(),
-            NftObject::Other(other) => {
-                return Err(anyhow!("parse output error: {:?}", other));
-            }
-            _ => {
-                return Err(anyhow!("parse output error: {:?}", nft_obj));
-            }
-        };
+        let handle = get_parsed_handle(output_with_handle).await?;
 
         let rule = FirewallRule {
             id: rule_id.clone(),
@@ -362,24 +329,7 @@ impl Firewall {
         }
 
         let output_with_handle = self.create_ban_rule(ip).await?;
-        let nft_objs = parse_output(&output_with_handle).await?;
-
-        let nft_obj = nft_objs.first()
-            .ok_or_else(|| anyhow!("fail to  get output  after adding rule"))?;
-
-        let handle = match nft_obj {
-            NftObject::Add(obj) => obj
-                .get_handle()
-                .await
-                .ok_or_else(|| anyhow!("fail to get "))?
-                .to_string(),
-            NftObject::Other(other) => {
-                return Err(anyhow!("parse output error: {:?}", other));
-            }
-            _ => {
-                return Err(anyhow!("parse output error: {:?}", nft_obj));
-            }
-        };
+        let handle = get_parsed_handle(output_with_handle).await?;
 
         let rule = FirewallRule {
             id: rule_id.clone(),
@@ -425,7 +375,6 @@ impl Firewall {
             // if rule.ip == ip {
             let expiration = rule.created_at + duration;
 
-            
             now > expiration
         } else {
             false
@@ -642,16 +591,3 @@ impl Firewall {
         }
     }
 }
-
-/*
-impl Drop for Firewall {
-    fn drop(&mut self) {
-        // 异步清理执行器池
-        let executor = Arc::clone(&self.executor);
-        tokio::spawn(async move {
-            debug!("cleanup nft executor");
-            executor.cleanup().await.unwrap();
-        });
-    }
-}
-*/

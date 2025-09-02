@@ -3,7 +3,7 @@ use crate::error::FirewallError;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, error, info, warn};
-pub use parser::{parse_output, NftObject};
+pub use parser::{get_parsed_handle, NftObject};
 use std::{collections::VecDeque, fs::OpenOptions, process::Stdio, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};

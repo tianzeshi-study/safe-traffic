@@ -5,20 +5,23 @@ use safe_traffic_common::{
 };
 
 use chrono::{DateTime, Utc};
-use dashmap::{DashMap,DashSet};
+use dashmap::{DashMap, DashSet};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use log::{debug, error, info};
 use std::{
-    net::IpAddr,
-    sync::{atomic::{Ordering, AtomicUsize}, Arc},
-    time::Duration,
     collections::HashSet,
+    net::IpAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 use tokio::{sync::mpsc, time};
 
 const MAX_WINDOW_BUFFER: usize = 60;
 const MAX_REMOVE_MARKER: usize = 60;
-const CONCURRENT_SIZE: usize = 10;
+const CONCURRENT_SIZE: usize = 4;
 
 /// 单 IP 的滑动窗口记录
 #[derive(Debug)]
@@ -36,7 +39,7 @@ impl Window {
     async fn aging(&self) {
         self.remove_marker.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     async fn should_remove(&self) -> bool {
         self.remove_marker.load(Ordering::Relaxed) == MAX_REMOVE_MARKER
     }
@@ -54,8 +57,8 @@ pub struct RuleEngine {
 impl RuleEngine {
     /// 新建实例
     pub fn new(rules: HashSet<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
-        let rules = rules.into_iter().collect::<DashSet<Rule>>(); 
-        
+        let rules = rules.into_iter().collect::<DashSet<Rule>>();
+
         RuleEngine {
             rules,
             stats,
@@ -120,10 +123,7 @@ impl RuleEngine {
             })
             .collect();
 
-        debug!(
-            "starting checking rule: stats entries count: {}",
-            ips.len()
-        );
+        debug!("starting checking rule: stats entries count: {}", ips.len());
 
         // 异步并发处理
         stream::iter(ips)
@@ -143,75 +143,72 @@ impl RuleEngine {
                             continue;
                         }
 
-                        
                         let window_size = rule.window_secs as usize;
-                        // let win = if let Some(win) = self.windows.get(&ip) {
-                            // win
+                        let win = if let Some(win) = self.windows.get(&ip) {
+                            win
+                        } else {
+                            continue;
+                        };
+                        // let entry = if let dashmap::mapref::entry::Entry::Occupied(mut entry) =
+                        // self.windows.entry(ip)
+                        // {
+                        // entry
                         // } else {
-                            // continue;
+                        // continue;
                         // };
-                        let entry = if let dashmap::mapref::entry::Entry::Occupied(mut entry) = self.windows.entry(ip) {
-        entry
-    } else {
-        continue;
-    };
-    let win = entry.get();
+                        // let win = entry.get();
                         // 计算滑动窗口内总流量
                         let sum: u64 = win
                             .buffer
                             .iter()
                             .cycle()
                             .skip({
-                            let skip = (win.pos + win.buffer.len() - window_size + 1) % win.buffer.len();
+                                let skip = (win.pos + win.buffer.len() - window_size + 1)
+                                    % win.buffer.len();
 
-                            skip
+                                skip
                             })
                             .take(window_size)
                             .sum();
                         let avg_bps = sum / rule.window_secs;
-                        
-                        let (rules_num, removed_rules_num) = self.clean_expiration_rules(&rule, ip, Arc::clone(&fw))
-                            .await?; 
 
-                        if rules_num == 0{
+                        let (rules_num, removed_rules_num) = self
+                            .clean_expiration_rules(&rule, ip, Arc::clone(&fw))
+                            .await?;
+
+                        if rules_num == 0 {
                             // println!(" ip: {} \n average bps: {}, win buffer: {:?}, \n &win.buffer.len : {} \n, win.pos: {}", ip, avg_bps, &win.buffer, &win.buffer.len(), win.pos);
-                            
 
-                            let total_sum: u64 = win
-                            .buffer
-                            .iter()
-                            .sum();
-                            
+                            let total_sum: u64 = win.buffer.iter().sum();
+
+                            // println!("total ip:  {}", self.stats.len());
+
                             if total_sum == 0 {
-                                // win.remove_marker.fetch_add(1, Ordering::Relaxed);
-                                // win.remove_marker.load(Ordering::Relaxed);
-// win.remove_marker.fetch_add(1, Ordering::Relaxed);
-                                
-                                // if win.remove_marker.load(Ordering::Relaxed) == MAX_REMOVE_MARKER {
-
-
-                                    win.aging().await;
-                                    if win.should_remove().await {
-                                        info!("clean window of IP: {}", ip);
-                                        entry.remove_entry();
+                                win.aging().await;
+                                if win.should_remove().await {
+                                    info!("clean window of IP: {}", ip);
+                                    // entry.remove_entry();
                                     // self.windows.remove(&ip);
-                            // self.stats.remove(&ip);
+                                    // self.stats.remove(&ip);
                                 }
-                            // continue
+                                // continue
+                            }
                         }
 
-                        }
-
-                        
                         // if avg_bps == 0 {
-                            // self.stats.remove(&ip);
-                            // self.windows.remove(&ip);
-                            // continue
+                        // self.stats.remove(&ip);
+                        // self.windows.remove(&ip);
+                        // continue
                         // }
-                        
+
                         // 超过阈值 => 执行动作
                         debug!("{} average bps: {}", &ip, &avg_bps);
                         if avg_bps > rule.threshold_bps {
+                            println!(
+                                "ip: {}, avg_bps: {},\n win.buffer: {:?}, \n win.pos: {}",
+                                &ip, avg_bps, &win.buffer, win.pos
+                            );
+                            dbg!(&self.stats.contains_key(&ip));
                             match rule.action {
                                 Action::RateLimit {
                                     kbps,
@@ -242,8 +239,6 @@ impl RuleEngine {
                                 }
                             }
                         }
-
-
                     }
                     Ok(())
                 }
@@ -273,7 +268,7 @@ impl RuleEngine {
                             if fw.is_expiration(&id, seconds).await {
                                 debug!("intend to remove limit rule {} because of expiration", ip);
                                 fw.unblock(&id).await?;
-                                removed_rules_num +=1;
+                                removed_rules_num += 1;
                             }
                         }
                     }
@@ -282,7 +277,7 @@ impl RuleEngine {
                             if fw.is_expiration(&id, seconds).await {
                                 debug!("intend to unban {} because of expiration", ip);
                                 fw.unblock(&id).await?;
-                                removed_rules_num +=1;
+                                removed_rules_num += 1;
                             }
                         }
                     }
@@ -369,27 +364,31 @@ impl RuleEngine {
         info!("RuleEngine stopped gracefully");
         Ok(())
     }
-    
+
     pub async fn add_ban_rule_by_hand(
-    &self, 
-    seconds: Option<u64>,
-    window_secs: Option<u64>,
-threshold_bps: Option<u64>,
-) ->anyhow::Result<()> {
-            let mut rule = Rule {
-        action: Action::Ban { seconds: seconds },
-        ..Default::default()  // 其他字段保持默认
-    };
-    if let Some(window_secs) = window_secs{
-        rule.window_secs = window_secs;
-    };
-    if let Some(threshold_bps) = threshold_bps {
-        rule.threshold_bps = threshold_bps;
-    };
+        &self,
+        seconds: Option<u64>,
+        window_secs: Option<u64>,
+        threshold_bps: Option<u64>,
+    ) -> anyhow::Result<()> {
+        let mut rule = Rule {
+            action: Action::Ban { seconds: seconds },
+            ..Default::default() // 其他字段保持默认
+        };
+        if let Some(window_secs) = window_secs {
+            rule.window_secs = window_secs;
+        };
+        if let Some(threshold_bps) = threshold_bps {
+            rule.threshold_bps = threshold_bps;
+        };
         if self.rules.insert(rule) {
             Ok(())
         } else {
             Err(anyhow::anyhow!("fail to add rule"))
         }
-            }
+    }
+
+    // async fn clean_windows(&self) {
+    // self.Windows.retain(|win| !win.should_remove().await);
+    // }
 }

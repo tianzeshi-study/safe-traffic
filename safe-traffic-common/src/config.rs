@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet, 
-    fmt, 
-    fs, 
-    net::IpAddr, 
+    collections::HashSet,
+    fmt, fs,
+    hash::{Hash, Hasher},
+    net::IpAddr,
     path::Path,
-    hash::{Hash,Hasher}
 };
 
 /// hook type , input or output
@@ -161,7 +160,6 @@ impl Hash for Rule {
         self.action.hash(state);
     }
 }
-
 
 impl Rule {
     pub fn is_excluded(&self, ip: &IpAddr) -> bool {
