@@ -16,6 +16,11 @@ pub enum Request {
     },
     /// 封禁IP指定时长
     Ban { ip: IpAddr, seconds: Option<u64> },
+    /// 批量封禁IP指定时长
+    BatchBan {
+        ips: Vec<IpAddr>,
+        seconds: Option<u64>,
+    },
     /// 检查规则是否过期
     IsExpiration { rule_id: String, seconds: u64 },
     /// 解封指定规则ID
@@ -31,8 +36,6 @@ pub enum Request {
     Cleanup,
     /// 获取防火墙状态
     Status,
-    /// 批量封禁IP
-    BatchBan { ips: Vec<IpAddr>, seconds: u64 },
     /// 健康检查
     Ping,
     ///  清空规则

@@ -4,8 +4,6 @@ use clap::{Parser, Subcommand};
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-// 假设这些类型在你的项目中已定义
-// 如果需要，请调整导入路径
 use crate::client::TrafficClient;
 
 #[derive(Parser)]
@@ -47,6 +45,17 @@ enum Commands {
         #[arg(short, long)]
         seconds: Option<u64>,
     },
+
+    /// Batch ban several IP addresses for a specific duration, use space separation between IPs
+    BatchBan {
+        /// IP addresses to ban
+        #[arg(value_name = "IPs")]
+        ips: Vec<IpAddr>,
+        /// Duration in seconds
+        #[arg(short, long)]
+        seconds: Option<u64>,
+    },
+
     /// Remove a ban or limit rule by rule ID
     Unblock {
         /// Rule ID to remove
@@ -119,6 +128,26 @@ async fn main() -> Result<()> {
                 println!("IP banned successfully!");
                 println!("Rule ID: {}", rule_id);
                 println!("IP: {}", ip);
+                println!(
+                    "Duration: {} seconds",
+                    seconds
+                        .map(|s| s.to_string())
+                        .unwrap_or("infinity".to_string())
+                );
+            }
+            Err(e) => {
+                eprintln!("Failed to ban IP: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::BatchBan { ips, seconds } => match client.batch_ban(ips.clone(), seconds).await {
+            Ok(rule_ids) => {
+                println!("IP banned successfully!");
+                for (i, rule_id) in rule_ids.iter().enumerate() {
+                    print!("Rule ID: {}    ", rule_id);
+                    println!("IP: {}", ips[i]);
+                }
                 println!(
                     "Duration: {} seconds",
                     seconds

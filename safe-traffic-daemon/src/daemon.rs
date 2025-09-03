@@ -146,6 +146,9 @@ impl TrafficDaemon {
                 seconds,
             } => match firewall.limit(ip, kbps, burst, seconds).await {
                 Ok(rule_id) => {
+                    let _ = engine
+                        .add_limit_rule_by_hand(kbps, burst, seconds, None, None)
+                        .await;
                     info!("Successfully set limit for {}: {} kbps", ip, kbps);
                     ResponseData::Message(rule_id)
                 }
@@ -159,7 +162,7 @@ impl TrafficDaemon {
 
             Request::Ban { ip, seconds } => match firewall.ban(ip, seconds).await {
                 Ok(rule_id) => {
-                    engine.add_ban_rule_by_hand(seconds, None, None).await?;
+                    let _ = engine.add_ban_rule_by_hand(seconds, None, None).await;
                     let seconds: String = seconds
                         .map(|s| s.to_string())
                         .unwrap_or("infinity".to_string());
@@ -173,6 +176,29 @@ impl TrafficDaemon {
                     });
                 }
             },
+
+            Request::BatchBan { ips, seconds } => {
+                match firewall.batch_ban(ips.clone(), seconds).await {
+                    Ok(rule_ids) => {
+                        let _ = engine.add_ban_rule_by_hand(seconds, None, None).await;
+                        let seconds: String = seconds
+                            .map(|s| s.to_string())
+                            .unwrap_or("infinity".to_string());
+                        info!(
+                            "Successfully batch banned {} IPs for {} seconds",
+                            ips.len(),
+                            seconds
+                        );
+                        ResponseData::StringList(rule_ids)
+                    }
+                    Err(e) => {
+                        error!("Failed to batch ban {} IPs: {}", ips.len(), e);
+                        return Ok(Response::Error {
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
 
             Request::IsExpiration { rule_id, seconds } => {
                 let is_expired = firewall.is_expiration(&rule_id, seconds).await;
@@ -312,25 +338,6 @@ impl TrafficDaemon {
                     });
                 }
             },
-
-            Request::BatchBan { ips, seconds } => {
-                match firewall.batch_ban(ips.clone(), seconds).await {
-                    Ok(rule_ids) => {
-                        info!(
-                            "Successfully batch banned {} IPs for {} seconds",
-                            ips.len(),
-                            seconds
-                        );
-                        ResponseData::StringList(rule_ids)
-                    }
-                    Err(e) => {
-                        error!("Failed to batch ban IPs: {}", e);
-                        return Ok(Response::Error {
-                            message: e.to_string(),
-                        });
-                    }
-                }
-            }
 
             Request::Ping => {
                 debug!("Ping request received");

@@ -142,5 +142,5 @@ pub struct FirewallRule {
     pub ip: IpAddr,
     pub rule_type: Action,
     pub created_at: DateTime<Utc>,
-    pub handle: Option<String>,
+    pub handle: Vec<String>,
 }

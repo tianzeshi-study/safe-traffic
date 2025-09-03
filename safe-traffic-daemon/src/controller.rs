@@ -110,7 +110,7 @@ impl Firewall {
         Ok(())
     }
 
-    /// 对指定 IP 设置速率限制
+    /// 对指定 IP 设置永久速率限制
     pub async fn infinity_limit(
         &self,
         ip: IpAddr,
@@ -141,7 +141,7 @@ impl Firewall {
             }
         }
 
-        let handle = self.create_limit_rule(ip, kbps, burst).await?;
+        let (handle, handle1) = self.create_limit_rule(ip, kbps, burst).await?;
 
         let rule = FirewallRule {
             id: rule_id.clone(),
@@ -152,7 +152,7 @@ impl Firewall {
                 seconds: None,
             },
             created_at: Utc::now(),
-            handle: Some(handle),
+            handle: vec![handle, handle1],
         };
 
         self.rules.write().await.insert(rule_id.clone(), rule);
@@ -214,7 +214,7 @@ impl Firewall {
             }
         }
 
-        let handle = self.create_limit_rule(ip, kbps, burst).await?;
+        let (handle, handle1) = self.create_limit_rule(ip, kbps, burst).await?;
 
         let rule = FirewallRule {
             id: rule_id.clone(),
@@ -225,7 +225,7 @@ impl Firewall {
                 seconds: Some(seconds),
             },
             created_at: Utc::now(),
-            handle: Some(handle),
+            handle: vec![handle, handle1],
         };
 
         self.rules.write().await.insert(rule_id.clone(), rule);
@@ -242,7 +242,12 @@ impl Firewall {
     }
 
     /// 创建速率限制规则
-    async fn create_limit_rule(&self, ip: IpAddr, kbps: u64, burst: u64) -> Result<String> {
+    async fn create_limit_rule(
+        &self,
+        ip: IpAddr,
+        kbps: u64,
+        burst: u64,
+    ) -> Result<(String, String)> {
         let direction = match self.hook {
             HookType::Input => "saddr",
             HookType::Output => "daddr",
@@ -254,16 +259,22 @@ impl Firewall {
         };
 
         let rule_cmd = format!(
-            "add rule {} {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes drop",
+            "add rule {} {} {} {} {} {} limit rate {} kbytes/second burst {} kbytes accept",
             self.family, self.table_name, self.chain_name, ip_version, direction, ip, kbps, burst,
         );
 
-        // self.executor.execute(&rule_cmd).await?;
-        // let output_with_handle = self.create_ban_rule(ip).await?;
         let output_with_handle = self.executor.execute(&rule_cmd).await?;
         let handle = get_parsed_handle(output_with_handle).await?;
 
-        Ok(handle)
+        let rule_cmd1 = format!(
+            "add rule {} {} {} {} {} {} drop",
+            self.family, self.table_name, self.chain_name, ip_version, direction, ip,
+        );
+        let output_with_handle1 = self.executor.execute(&rule_cmd1).await?;
+
+        let handle1 = get_parsed_handle(output_with_handle1).await?;
+
+        Ok((handle, handle1))
     }
 
     /// 对指定 IP 封禁指定时长
@@ -307,7 +318,7 @@ impl Firewall {
                 seconds: Some(seconds),
             },
             created_at: now,
-            handle: Some(handle),
+            handle: vec![handle],
         };
 
         self.rules.write().await.insert(rule_id.clone(), rule);
@@ -336,7 +347,7 @@ impl Firewall {
             ip,
             rule_type: Action::Ban { seconds: None },
             created_at: now,
-            handle: Some(handle),
+            handle: vec![handle],
         };
 
         self.rules.write().await.insert(rule_id.clone(), rule);
@@ -386,17 +397,17 @@ impl Firewall {
     pub async fn unblock(&self, id: &str) -> Result<()> {
         debug!("get RwLock to remove rule : {}", id);
 
-        let handle = {
+        let handles: Vec<String> = {
             let rules = self.rules.read().await;
             let rule = rules
                 .get(id)
                 .ok_or_else(|| anyhow!("fail to get rule by id: {}", id))?;
-            rule.handle
-                .clone()
-                .ok_or_else(|| anyhow!("rule has no handle: {}", id))?
+            rule.handle.clone()
+            // .ok_or_else(|| anyhow!("rule has no handle: {}", id))?
         };
-
-        self.remove_rule_by_handle(&handle).await?;
+        for handle in handles {
+            self.remove_rule_by_handle(&handle).await?;
+        }
 
         let removed = {
             let mut rules = self.rules.write().await;
@@ -531,32 +542,32 @@ impl Firewall {
         ))
     }
 
-    /// 批量添加规则（更高效）
-    pub async fn batch_ban(&self, ips: Vec<IpAddr>, seconds: u64) -> Result<Vec<String>> {
-        let mut commands = Vec::new();
-        let mut rule_ids = Vec::new();
+    /// 批量添加规则
+    pub async fn batch_ban(&self, ips: Vec<IpAddr>, seconds: Option<u64>) -> Result<Vec<String>> {
+        let mut handles = Vec::with_capacity(ips.len());
+        let mut rule_ids = Vec::with_capacity(ips.len());
+
+        let seconds = if let Some(seconds) = seconds {
+            seconds
+        } else {
+            for ip in ips {
+                let rule_id = self.infinity_ban(ip).await?;
+                rule_ids.push(rule_id);
+            }
+            return Ok(rule_ids);
+        };
 
         let duration = Duration::seconds(seconds as i64);
         let until = Utc::now() + duration;
 
         for ip in ips.clone() {
             let rule_id = format!("ban_{}_{}", ip, until.timestamp());
-            let ip_version = match ip {
-                IpAddr::V4(_) => "ip saddr",
-                IpAddr::V6(_) => "ip6 saddr",
-            };
+            let output_with_handle = self.create_ban_rule(ip).await?;
+            let handle = get_parsed_handle(output_with_handle).await?;
 
-            let rule_cmd = format!(
-                "add rule {} {} {} {} {} drop",
-                self.family, self.table_name, self.chain_name, ip_version, ip
-            );
-
-            commands.push(rule_cmd);
+            handles.push(handle);
             rule_ids.push(rule_id);
         }
-
-        // 批量执行命令
-        self.executor.execute_batch(commands).await?;
 
         // 批量更新内存中的规则
         {
@@ -569,7 +580,7 @@ impl Firewall {
                         seconds: Some(seconds),
                     },
                     created_at: Utc::now(),
-                    handle: Some(format!("ban_{}_{}", ip, Utc::now().timestamp())),
+                    handle: vec![handles[i].clone()],
                 };
                 rules.insert(rule_ids[i].clone(), rule);
             }

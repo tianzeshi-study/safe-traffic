@@ -59,6 +59,19 @@ impl TrafficClient {
         }
     }
 
+    pub async fn batch_ban(
+        &mut self,
+        ips: Vec<IpAddr>,
+        seconds: Option<u64>,
+    ) -> Result<Vec<String>> {
+        let request = Request::BatchBan { ips, seconds };
+        match self.send_request(request).await? {
+            Response::Success(ResponseData::StringList(rule_ids)) => Ok(rule_ids),
+            Response::Error { message } => Err(anyhow::anyhow!(message)),
+            _ => Err(anyhow::anyhow!("Unexpected response format")),
+        }
+    }
+
     pub async fn unblock(&mut self, rule_id: String) -> Result<()> {
         let request = Request::Unblock { rule_id };
         match self.send_request(request).await? {

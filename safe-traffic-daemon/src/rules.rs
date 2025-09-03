@@ -388,6 +388,35 @@ impl RuleEngine {
         }
     }
 
+    pub async fn add_limit_rule_by_hand(
+        &self,
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+        window_secs: Option<u64>,
+        threshold_bps: Option<u64>,
+    ) -> anyhow::Result<()> {
+        let mut rule = Rule {
+            action: Action::RateLimit {
+                kbps,
+                burst,
+                seconds,
+            },
+            ..Default::default() // 其他字段保持默认
+        };
+        if let Some(window_secs) = window_secs {
+            rule.window_secs = window_secs;
+        };
+        if let Some(threshold_bps) = threshold_bps {
+            rule.threshold_bps = threshold_bps;
+        };
+        if self.rules.insert(rule) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("fail to add rule"))
+        }
+    }
+
     // async fn clean_windows(&self) {
     // self.Windows.retain(|win| !win.should_remove().await);
     // }
