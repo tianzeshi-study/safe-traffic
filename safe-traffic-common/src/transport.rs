@@ -14,6 +14,15 @@ pub enum Request {
         burst: Option<u64>,
         seconds: Option<u64>,
     },
+
+    /// 批量设置IP速率限制
+    BatchLimit {
+        ips: Vec<IpAddr>,
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+    },
+
     /// 封禁IP指定时长
     Ban { ip: IpAddr, seconds: Option<u64> },
     /// 批量封禁IP指定时长

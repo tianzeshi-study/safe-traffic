@@ -36,6 +36,23 @@ enum Commands {
         #[arg(short, long)]
         seconds: Option<u64>,
     },
+
+    /// Limit traffic for specific IP addresses,, use space separation between IPs
+    BatchLimit {
+        /// IP addresses to limit
+        #[arg(value_name = "IPs")]
+        ips: Vec<IpAddr>,
+        /// Speed limit in kbps
+        #[arg(short, long)]
+        kbps: u64,
+        /// Burst limit (optional)
+        #[arg(short, long)]
+        burst: Option<u64>,
+        /// Duration in seconds
+        #[arg(short, long)]
+        seconds: Option<u64>,
+    },
+
     /// Ban an IP address for a specific duration
     Ban {
         /// IP address to ban
@@ -113,6 +130,29 @@ async fn main() -> Result<()> {
                 println!("Rule ID: {}", rule_id);
                 println!("IP: {}", ip);
                 println!("Speed limit: {} kbps", kbps);
+                if let Some(burst) = burst {
+                    println!("Burst limit: {} kb", burst);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to apply traffic limit: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::BatchLimit {
+            ips,
+            kbps,
+            burst,
+            seconds,
+        } => match client.batch_limit(ips.clone(), kbps, burst, seconds).await {
+            Ok(rule_ids) => {
+                println!("Traffic limit applied successfully!");
+                for (i, rule_id) in rule_ids.iter().enumerate() {
+                    print!("Rule ID: {}    ", rule_id);
+                    print!("IP: {}    ", ips[i].clone());
+                    println!("Speed limit: {} kbps", kbps);
+                }
                 if let Some(burst) = burst {
                     println!("Burst limit: {} kb", burst);
                 }

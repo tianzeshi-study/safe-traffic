@@ -179,39 +179,39 @@ impl Firewall {
         let duration = Duration::seconds(seconds as i64);
         let now = Utc::now();
         let until = now + duration;
-        let rule_id = format!("limit_{}_{}_{}", ip, kbps, until.timestamp());
+        // let rule_id = format!("limit_{}_{}_{}", ip, kbps, until.timestamp());
 
         let burst = if let Some(bur) = burst {
             bur
         } else {
             kbps.min(1024) / 10
         };
+        let rule_id = format!("limit_{}_{}_{}_{}", ip, kbps, burst, seconds);
 
         // 检查是否已存在相同规则
         {
             let rules = self.rules.read().await;
-            for (_, rule) in rules.iter() {
-                if rule.ip == ip {
-                    if let Action::RateLimit {
-                        kbps: existing_kbps,
-                        seconds: sec,
-                        ..
-                    } = rule.rule_type
+            // for (_, rule) in rules.iter() {
+            // if rule.ip == ip {
+            if let Some(rule) = rules.get(&rule_id) {
+                if let Action::RateLimit {
+                    kbps: existing_kbps,
+                    seconds: sec,
+                    ..
+                } = rule.rule_type
+                {
+                    let existing_until = rule.created_at + duration;
+                    if existing_until > Utc::now() && existing_kbps == kbps && sec == Some(seconds)
                     {
-                        let existing_until = rule.created_at + duration;
-                        if existing_until > Utc::now()
-                            && existing_kbps == kbps
-                            && sec == Some(seconds)
-                        {
-                            debug!(
-                                "IP {} has already been banned until {}, skipping",
-                                ip, existing_until
-                            );
-                            return Ok(rule.id.clone());
-                        }
+                        debug!(
+                            "IP {} has already been banned until {}, skipping",
+                            ip, existing_until
+                        );
+                        return Ok(rule.id.clone());
                     }
                 }
             }
+            // }
         }
 
         let (handle, handle1) = self.create_limit_rule(ip, kbps, burst).await?;
@@ -286,26 +286,27 @@ impl Firewall {
         let duration = Duration::seconds(seconds as i64);
         let now = Utc::now();
         let until = now + duration;
-        let rule_id = format!("ban_{}_{}", ip, until.timestamp());
+        // let rule_id = format!("ban_{}_{}", ip, until.timestamp());
+        let rule_id = format!("ban_{}_{}", ip, seconds);
 
         // 检查是否已被封禁
         {
             let rules = self.rules.read().await;
-            for (_, rule) in rules.iter() {
-                if rule.ip == ip {
-                    // if let Some(rule) = rules.get(&rule_id) {
-                    if let Action::Ban { seconds: _sec } = rule.rule_type {
-                        let existing_until = rule.created_at + duration;
-                        if existing_until > Utc::now() {
-                            debug!(
-                                "IP {} has already been banned until {}, skipping",
-                                ip, existing_until
-                            );
-                            return Ok(rule.id.clone());
-                        }
+            // for (_, rule) in rules.iter() {
+            // if rule.ip == ip {
+            if let Some(rule) = rules.get(&rule_id) {
+                if let Action::Ban { seconds: _sec } = rule.rule_type {
+                    let existing_until = rule.created_at + duration;
+                    if existing_until > Utc::now() {
+                        debug!(
+                            "IP {} has already been banned until {}, skipping",
+                            ip, existing_until
+                        );
+                        return Ok(rule.id.clone());
                     }
                 }
             }
+            // }
         }
 
         let output_with_handle = self.create_ban_rule(ip).await?;
@@ -542,7 +543,7 @@ impl Firewall {
         ))
     }
 
-    /// 批量添加规则
+    /// 批量封禁
     pub async fn batch_ban(&self, ips: Vec<IpAddr>, seconds: Option<u64>) -> Result<Vec<String>> {
         let mut handles = Vec::with_capacity(ips.len());
         let mut rule_ids = Vec::with_capacity(ips.len());
@@ -561,7 +562,7 @@ impl Firewall {
         let until = Utc::now() + duration;
 
         for ip in ips.clone() {
-            let rule_id = format!("ban_{}_{}", ip, until.timestamp());
+            let rule_id = format!("ban_{}_{}", ip, seconds);
             let output_with_handle = self.create_ban_rule(ip).await?;
             let handle = get_parsed_handle(output_with_handle).await?;
 
@@ -587,6 +588,66 @@ impl Firewall {
         }
 
         info!("Batch banned {} IPs until {}", rule_ids.len(), until);
+        Ok(rule_ids)
+    }
+
+    /// 批量封禁
+    pub async fn batch_limit(
+        &self,
+        ips: Vec<IpAddr>,
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+    ) -> Result<Vec<String>> {
+        let mut handles = Vec::with_capacity(ips.len());
+        let mut rule_ids = Vec::with_capacity(ips.len());
+
+        let seconds = if let Some(seconds) = seconds {
+            seconds
+        } else {
+            for ip in ips {
+                let rule_id = self.infinity_limit(ip, kbps, burst).await?;
+                rule_ids.push(rule_id);
+            }
+            return Ok(rule_ids);
+        };
+
+        let duration = Duration::seconds(seconds as i64);
+        let until = Utc::now() + duration;
+
+        let burst = if let Some(bur) = burst {
+            bur
+        } else {
+            kbps.min(1024) / 10
+        };
+
+        for ip in ips.clone() {
+            let rule_id = format!("limit_{}_{}", ip, until.timestamp());
+            let handle_unit = self.create_limit_rule(ip, kbps, burst).await?;
+            handles.push(handle_unit);
+            rule_ids.push(rule_id);
+        }
+
+        // 批量更新内存中的规则
+        {
+            let mut rules = self.rules.write().await;
+            for (i, ip) in ips.into_iter().enumerate() {
+                let rule = FirewallRule {
+                    id: rule_ids[i].clone(),
+                    ip,
+                    rule_type: Action::RateLimit {
+                        kbps,
+                        burst: Some(burst),
+                        seconds: Some(seconds),
+                    },
+                    created_at: Utc::now(),
+                    handle: vec![handles[i].0.clone(), handles[i].1.clone()],
+                };
+                rules.insert(rule_ids[i].clone(), rule);
+            }
+        }
+
+        info!("Batch limited {} IPs until {}", rule_ids.len(), until);
         Ok(rule_ids)
     }
 

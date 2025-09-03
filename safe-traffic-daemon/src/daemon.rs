@@ -149,7 +149,13 @@ impl TrafficDaemon {
                     let _ = engine
                         .add_limit_rule_by_hand(kbps, burst, seconds, None, None)
                         .await;
-                    info!("Successfully set limit for {}: {} kbps", ip, kbps);
+                    let seconds: String = seconds
+                        .map(|s| s.to_string())
+                        .unwrap_or("infinity".to_string());
+                    info!(
+                        "Successfully set limit for {}: {} kbps for {} seconds",
+                        ip, kbps, seconds
+                    );
                     ResponseData::Message(rule_id)
                 }
                 Err(e) => {
@@ -159,6 +165,38 @@ impl TrafficDaemon {
                     });
                 }
             },
+
+            Request::BatchLimit {
+                ips,
+                kbps,
+                burst,
+                seconds,
+            } => {
+                match firewall
+                    .batch_limit(ips.clone(), kbps, burst, seconds)
+                    .await
+                {
+                    Ok(rule_ids) => {
+                        let _ = engine.add_limit_rule_by_hand(kbps, burst, seconds, None, None);
+                        let seconds: String = seconds
+                            .map(|s| s.to_string())
+                            .unwrap_or("infinity".to_string());
+                        info!(
+                            "Successfully set limit for {}: {} kbps for {} seconds",
+                            ips.len(),
+                            kbps,
+                            seconds
+                        );
+                        ResponseData::StringList(rule_ids)
+                    }
+                    Err(e) => {
+                        error!("Failed to batch limit {} IPs: {}", ips.len(), e);
+                        return Ok(Response::Error {
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
 
             Request::Ban { ip, seconds } => match firewall.ban(ip, seconds).await {
                 Ok(rule_id) => {
