@@ -13,7 +13,11 @@ use tokio::signal;
 /// 运行主监控逻辑
 pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> anyhow::Result<()> {
     let stats = Arc::new(DashMap::<IpAddr, TrafficStats>::new());
-    let engine = Arc::new(RuleEngine::new(cfg.rules.clone(), stats.clone()));
+    let engine = Arc::new(RuleEngine::new(
+        cfg.rules.clone(),
+        stats.clone(),
+        fw.clone(),
+    ));
     let (connection, handle, _messages) = new_connection()?;
     tokio::spawn(connection);
 
@@ -22,7 +26,7 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
         cfg.interface.clone(),
         stats,
         // Duration::from_secs(cfg.monitor_interval.unwrap_or(1)),
-        Duration::from_secs(cfg.rule_check_interval.unwrap_or(10)),
+        Duration::from_secs(cfg.check_interval.unwrap_or(10)),
         executor.clone(),
     ));
     let daemon = Arc::new(TrafficDaemon::new(fw.clone(), engine.clone()));
@@ -42,10 +46,7 @@ pub async fn run(cfg: Config, fw: Arc<Firewall>, executor: Arc<NftExecutor>) -> 
     let fw_clone = Arc::clone(&fw);
     let engine_task = tokio::spawn(async move {
         engine_clone
-            .start(
-                fw_clone,
-                Duration::from_secs(cfg.rule_check_interval.unwrap_or(10)),
-            )
+            .start(Duration::from_secs(cfg.check_interval.unwrap_or(10)))
             .await
     });
     let daemon_task = tokio::spawn(async move { daemon_clone.start().await });

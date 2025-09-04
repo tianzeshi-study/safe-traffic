@@ -182,10 +182,8 @@ pub struct Config {
     pub policy: Option<PolicyType>,
     /// 主网卡名称
     pub interface: String,
-    /// 日志保留路径
-    // pub log_dir_path: Option<String>,
-    pub monitor_interval: Option<u64>, // 监控间隔（秒）
-    pub rule_check_interval: Option<u64>,
+
+    pub check_interval: Option<u64>,
     pub executor_pool_size: Option<usize>,    // 默认 5
     pub executor_max_age_secs: Option<i64>,   // 默认 300 秒
     pub executor_max_commands: Option<usize>, // 默认 100 条命令

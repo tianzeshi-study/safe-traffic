@@ -52,11 +52,16 @@ pub struct RuleEngine {
     handles: DashMap<IpAddr, Vec<String>>,
     windows: DashMap<IpAddr, Window>,
     signal_controller: SignalController,
+    firewall: Arc<Firewall>,
 }
 
 impl RuleEngine {
     /// 新建实例
-    pub fn new(rules: HashSet<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
+    pub fn new(
+        rules: HashSet<Rule>,
+        stats: Arc<DashMap<IpAddr, TrafficStats>>,
+        firewall: Arc<Firewall>,
+    ) -> Self {
         let rules = rules.into_iter().collect::<DashSet<Rule>>();
 
         RuleEngine {
@@ -65,6 +70,7 @@ impl RuleEngine {
             handles: DashMap::new(),
             windows: DashMap::new(),
             signal_controller: SignalController::new(),
+            firewall,
         }
     }
 
@@ -90,7 +96,8 @@ impl RuleEngine {
     }
 
     /// 检查所有 IP 并在必要时调用防火墙控制
-    pub async fn check_and_apply(&self, fw_origin: Arc<Firewall>) -> anyhow::Result<()> {
+    pub async fn check_and_apply(&self) -> anyhow::Result<()> {
+        let fw_origin = self.firewall.clone();
         let now = Utc::now();
         // 遍历每个 IP 的最新流量
         let ips: Vec<IpAddr> = self
@@ -293,7 +300,7 @@ impl RuleEngine {
     }
 
     /// 启动规则引擎主循环，支持暂停/恢复/停止
-    pub async fn start(&self, fw: Arc<Firewall>, check_interval: Duration) -> anyhow::Result<()> {
+    pub async fn start(&self, check_interval: Duration) -> anyhow::Result<()> {
         info!("RuleEngine starting...");
 
         // 创建控制信号通道
@@ -345,7 +352,7 @@ impl RuleEngine {
                     }
 
                     // 执行检查和应用规则
-                    match self.check_and_apply(Arc::clone(&fw)).await {
+                    match self.check_and_apply().await {
                         Ok(_) => {}
                         Err(e) => error!("check and apply failed: {}", e),
                     }
