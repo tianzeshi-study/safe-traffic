@@ -125,6 +125,10 @@ impl RuleEngine {
 
         debug!("starting checking rule: stats entries count: {}", ips.len());
 
+        let concurrent_size = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(CONCURRENT_SIZE);
+
         // 异步并发处理
         stream::iter(ips)
             .filter(|ip| {
@@ -133,7 +137,7 @@ impl RuleEngine {
                 async move { !fw_origin.is_excluded(&ip).await }
             })
             .map(Ok::<_, anyhow::Error>)
-            .try_for_each_concurrent(CONCURRENT_SIZE, |ip| {
+            .try_for_each_concurrent(concurrent_size, |ip| {
                 let fw = Arc::clone(&fw_origin);
                 async move {
                     // 对每条规则进行检测

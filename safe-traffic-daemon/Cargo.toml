@@ -24,6 +24,7 @@ futures = {workspace=true}
 serde_json = {workspace=true}
 netlink-packet-route = "0.22"
 safe-traffic-common = { version = "0.2.0", path = "../safe-traffic-common" }
+ipnet = "2.11.0"
 
 
 

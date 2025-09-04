@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use ipnet::IpNet;
 use tokio::sync::RwLock;
 
 /// 防火墙控制器（使用池化的 nft 执行器）
@@ -309,8 +310,8 @@ impl Firewall {
             // }
         }
 
-        let output_with_handle = self.create_ban_rule(ip).await?;
-        let handle = get_parsed_handle(output_with_handle).await?;
+        let handle = self.create_ban_rule(ip).await?;
+        // let handle = get_parsed_handle(output_with_handle).await?;
 
         let rule = FirewallRule {
             id: rule_id.clone(),
@@ -340,8 +341,8 @@ impl Firewall {
             }
         }
 
-        let output_with_handle = self.create_ban_rule(ip).await?;
-        let handle = get_parsed_handle(output_with_handle).await?;
+        let handle = self.create_ban_rule(ip).await?;
+        // let handle = get_parsed_handle(output_with_handle).await?;
 
         let rule = FirewallRule {
             id: rule_id.clone(),
@@ -374,8 +375,9 @@ impl Firewall {
         );
 
         let output_with_handle = self.executor.execute(&rule_cmd).await?;
+        let handle = get_parsed_handle(output_with_handle).await?;
 
-        Ok(output_with_handle)
+        Ok(handle)
     }
 
     pub async fn is_expiration(&self, rule_id: &str, seconds: u64) -> bool {
@@ -661,5 +663,106 @@ impl Firewall {
         } else {
             Err(anyhow!("fail to add {} to global exclude", ip))
         }
+    }
+}
+
+impl Firewall {
+    pub async fn ban_cidr(&self, cidr: IpNet, seconds: Option<u64>) -> Result<String> {
+        if seconds.is_none() {
+            return self.infinity_ban_cidr(cidr).await;
+        };
+        let seconds = seconds.unwrap();
+        let duration = Duration::seconds(seconds as i64);
+        let now = Utc::now();
+        let until = now + duration;
+        let rule_id = format!("ban_{}_{}", cidr, seconds);
+
+        // 检查是否已被封禁
+        {
+            let rules = self.rules.read().await;
+            if let Some(rule) = rules.get(&rule_id) {
+                if let Action::Ban { seconds: _sec } = rule.rule_type {
+                    let existing_until = rule.created_at + duration;
+                    if existing_until > Utc::now() {
+                        debug!(
+                            "IP {} has already been banned until {}, skipping",
+                            cidr.clone(),
+                            existing_until
+                        );
+                        return Ok(rule.id.clone());
+                    }
+                }
+            }
+            // }
+        }
+
+        let handle = self.create_ban_cidr_rule(cidr).await?;
+        // let handle = get_parsed_handle(output_with_handle).await?;
+        let ip = cidr.network();
+
+        let rule = FirewallRule {
+            id: rule_id.clone(),
+            ip,
+            rule_type: Action::Ban {
+                seconds: Some(seconds),
+            },
+            created_at: now,
+            handle: vec![handle],
+        };
+
+        self.rules.write().await.insert(rule_id.clone(), rule);
+        info!("Banned {} until {} \n rule id : {}", ip, until, &rule_id);
+
+        Ok(rule_id)
+    }
+
+    async fn create_ban_cidr_rule(&self, cidr: IpNet) -> Result<String> {
+        let direction = match self.hook {
+            HookType::Input => "saddr",
+            HookType::Output => "daddr",
+        };
+        let ip_version = match cidr {
+            IpNet::V4(v4net) => "ip",
+            IpNet::V6(v6net) => "ip6",
+        };
+        let rule_cmd = format!(
+            "add rule {} {} {} {} {} {} drop",
+            self.family, self.table_name, self.chain_name, ip_version, direction, cidr
+        );
+
+        let output_with_handle = self.executor.execute(&rule_cmd).await?;
+        let handle = get_parsed_handle(output_with_handle).await?;
+
+        Ok(handle)
+    }
+
+    pub async fn infinity_ban_cidr(&self, cidr: IpNet) -> Result<String> {
+        let now = Utc::now();
+        let rule_id = format!("ban_{}", cidr);
+
+        {
+            let rules = self.rules.read().await;
+            if let Some(_existing_rule) = rules.get(&rule_id) {
+                debug!("Rule {} already exists, skipping creation", rule_id);
+                return Ok(rule_id);
+            }
+        }
+
+        let handle = self.create_ban_cidr_rule(cidr).await?;
+        // let handle = get_parsed_handle(output_with_handle).await?;
+        let ip = cidr.network();
+
+        let rule = FirewallRule {
+            id: rule_id.clone(),
+            ip,
+            rule_type: Action::Ban { seconds: None },
+            created_at: now,
+            handle: vec![handle],
+        };
+
+        self.rules.write().await.insert(rule_id.clone(), rule);
+        info!("Banned {} infinity   \n rule id : {}", cidr, &rule_id);
+
+        Ok(rule_id)
     }
 }
