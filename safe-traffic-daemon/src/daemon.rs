@@ -147,7 +147,15 @@ impl TrafficDaemon {
             } => match firewall.limit(ip, kbps, burst, seconds).await {
                 Ok(rule_id) => {
                     let _ = engine
-                        .add_limit_rule_by_hand(kbps, burst, seconds, None, None)
+                        .add_limit_rule_by_hand(
+                            ip,
+                            rule_id.clone(),
+                            kbps,
+                            burst,
+                            seconds,
+                            None,
+                            None,
+                        )
                         .await;
                     let seconds: String = seconds
                         .map(|s| s.to_string())
@@ -177,12 +185,24 @@ impl TrafficDaemon {
                     .await
                 {
                     Ok(rule_ids) => {
-                        let _ = engine.add_limit_rule_by_hand(kbps, burst, seconds, None, None);
+                        for (i, ip) in ips.iter().enumerate() {
+                            let _ = engine
+                                .add_limit_rule_by_hand(
+                                    ip.clone(),
+                                    rule_ids[i].clone(),
+                                    kbps,
+                                    burst,
+                                    seconds,
+                                    None,
+                                    None,
+                                )
+                                .await;
+                        }
                         let seconds: String = seconds
                             .map(|s| s.to_string())
                             .unwrap_or("infinity".to_string());
                         info!(
-                            "Successfully set limit for {}: {} kbps for {} seconds",
+                            "Successfully set limit for {} IPs: {} kbps for {} seconds",
                             ips.len(),
                             kbps,
                             seconds
@@ -200,7 +220,9 @@ impl TrafficDaemon {
 
             Request::Ban { ip, seconds } => match firewall.ban(ip, seconds).await {
                 Ok(rule_id) => {
-                    let _ = engine.add_ban_rule_by_hand(seconds, None, None).await;
+                    let _ = engine
+                        .add_ban_rule_by_hand(ip, rule_id.clone(), seconds, None, None)
+                        .await;
                     let seconds: String = seconds
                         .map(|s| s.to_string())
                         .unwrap_or("infinity".to_string());
@@ -218,7 +240,17 @@ impl TrafficDaemon {
             Request::BatchBan { ips, seconds } => {
                 match firewall.batch_ban(ips.clone(), seconds).await {
                     Ok(rule_ids) => {
-                        let _ = engine.add_ban_rule_by_hand(seconds, None, None).await;
+                        for (i, ip) in ips.iter().enumerate() {
+                            let _ = engine
+                                .add_ban_rule_by_hand(
+                                    ip.clone(),
+                                    rule_ids[i].clone(),
+                                    seconds,
+                                    None,
+                                    None,
+                                )
+                                .await;
+                        }
                         let seconds: String = seconds
                             .map(|s| s.to_string())
                             .unwrap_or("infinity".to_string());

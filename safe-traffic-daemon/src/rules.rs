@@ -204,11 +204,11 @@ impl RuleEngine {
                         // 超过阈值 => 执行动作
                         debug!("{} average bps: {}", &ip, &avg_bps);
                         if avg_bps > rule.threshold_bps {
-                            println!(
-                                "ip: {}, avg_bps: {},\n win.buffer: {:?}, \n win.pos: {}",
-                                &ip, avg_bps, &win.buffer, win.pos
-                            );
-                            dbg!(&self.stats.contains_key(&ip));
+                            // println!(
+                            // "ip: {}, avg_bps: {},\n win.buffer: {:?}, \n win.pos: {}",
+                            // &ip, avg_bps, &win.buffer, win.pos
+                            // );
+
                             match rule.action {
                                 Action::RateLimit {
                                     kbps,
@@ -367,6 +367,8 @@ impl RuleEngine {
 
     pub async fn add_ban_rule_by_hand(
         &self,
+        ip: IpAddr,
+        rule_id: String,
         seconds: Option<u64>,
         window_secs: Option<u64>,
         threshold_bps: Option<u64>,
@@ -381,6 +383,12 @@ impl RuleEngine {
         if let Some(threshold_bps) = threshold_bps {
             rule.threshold_bps = threshold_bps;
         };
+
+        self.handles
+            .entry(ip)
+            .and_modify(|vec| vec.push(rule_id.clone()))
+            .or_insert_with(|| vec![rule_id]);
+
         if self.rules.insert(rule) {
             Ok(())
         } else {
@@ -390,6 +398,8 @@ impl RuleEngine {
 
     pub async fn add_limit_rule_by_hand(
         &self,
+        ip: IpAddr,
+        rule_id: String,
         kbps: u64,
         burst: Option<u64>,
         seconds: Option<u64>,
@@ -410,9 +420,15 @@ impl RuleEngine {
         if let Some(threshold_bps) = threshold_bps {
             rule.threshold_bps = threshold_bps;
         };
+
+        self.handles
+            .entry(ip)
+            .and_modify(|vec| vec.push(rule_id.clone()))
+            .or_insert_with(|| vec![rule_id]);
         if self.rules.insert(rule) {
             Ok(())
         } else {
+            error!("fail to add rate limit rule by hand");
             Err(anyhow::anyhow!("fail to add rule"))
         }
     }
