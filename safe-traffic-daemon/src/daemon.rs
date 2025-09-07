@@ -218,6 +218,36 @@ impl TrafficDaemon {
                 }
             }
 
+            Request::LimitCidr {
+                cidr,
+                kbps,
+                burst,
+                seconds,
+            } => {
+                match engine
+                    .dyn_limit(Box::new(cidr.clone()), kbps, burst, seconds, None, None)
+                    .await
+                {
+                    Ok(rule_ids) => {
+                        let seconds: String = seconds
+                            .map(|s| s.to_string())
+                            .unwrap_or("infinity".to_string());
+                        info!(
+                            "Successfully limit {}  for {} seconds",
+                            cidr.clone(),
+                            seconds
+                        );
+                        ResponseData::StringList(rule_ids)
+                    }
+                    Err(e) => {
+                        error!("Failed to limit {} : {}", cidr, e);
+                        return Ok(Response::Error {
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
+
             Request::Ban { ip, seconds } => match firewall.ban(ip, seconds).await {
                 Ok(rule_id) => {
                     let _ = engine
@@ -237,6 +267,7 @@ impl TrafficDaemon {
                 }
             },
 
+            /*
             Request::BatchBan { ips, seconds } => {
                 match firewall.batch_ban(ips.clone(), seconds).await {
                     Ok(rule_ids) => {
@@ -269,11 +300,66 @@ impl TrafficDaemon {
                     }
                 }
             }
+            */
+            Request::BatchBan { ips, seconds } => {
+                match engine
+                    .dyn_block(Box::new(ips.clone()), seconds, None, None)
+                    .await
+                {
+                    Ok(rule_ids) => {
+                        for (i, ip) in ips.iter().enumerate() {
+                            let _ = engine
+                                .add_ban_rule_by_hand(
+                                    ip.clone(),
+                                    rule_ids[i].clone(),
+                                    seconds,
+                                    None,
+                                    None,
+                                )
+                                .await;
+                        }
+                        let seconds: String = seconds
+                            .map(|s| s.to_string())
+                            .unwrap_or("infinity".to_string());
+                        info!(
+                            "Successfully batch banned {} IPs for {} seconds",
+                            ips.len(),
+                            seconds
+                        );
+                        ResponseData::StringList(rule_ids)
+                    }
+                    Err(e) => {
+                        error!("Failed to batch ban {} IPs: {}", ips.len(), e);
+                        return Ok(Response::Error {
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
 
-            Request::IsExpiration { rule_id, seconds } => {
-                let is_expired = firewall.is_expiration(&rule_id, seconds).await;
-                debug!("Rule {} expiration check: {}", rule_id, is_expired);
-                ResponseData::Boolean(is_expired)
+            Request::BanCidr { cidr, seconds } => {
+                match engine
+                    .dyn_block(Box::new(cidr.clone()), seconds, None, None)
+                    .await
+                {
+                    Ok(rule_ids) => {
+                        let seconds: String = seconds
+                            .map(|s| s.to_string())
+                            .unwrap_or("infinity".to_string());
+                        info!(
+                            "Successfully banned {}  for {} seconds",
+                            cidr.clone(),
+                            seconds
+                        );
+                        ResponseData::StringList(rule_ids)
+                    }
+                    Err(e) => {
+                        error!("Failed to ban {} : {}", cidr, e);
+                        return Ok(Response::Error {
+                            message: e.to_string(),
+                        });
+                    }
+                }
             }
 
             Request::Unblock { rule_id } => match firewall.unblock(&rule_id).await {

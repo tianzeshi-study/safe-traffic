@@ -1,8 +1,8 @@
 use crate::nft::{get_parsed_handle, parser::*, NftError, NftExecutor};
 use dashmap::DashMap;
-use futures::stream::TryStreamExt;
-use log::{debug, error, info, warn};
-use rtnetlink::Handle;
+use futures::{stream, stream::StreamExt};
+use log::{debug, error, warn};
+
 use safe_traffic_common::utils::TrafficStats;
 use std::{
     collections::{HashMap, HashSet},
@@ -29,7 +29,6 @@ pub struct NftTrafficStats {
 
 /// 流量监控器
 pub struct TrafficMonitor {
-    handle: Handle,
     #[allow(dead_code)]
     interface: String,
     stats: Arc<DashMap<IpAddr, TrafficStats>>,
@@ -39,14 +38,12 @@ pub struct TrafficMonitor {
 
 impl TrafficMonitor {
     pub fn new(
-        handle: Handle,
         interface: String,
         stats: Arc<DashMap<IpAddr, TrafficStats>>,
         update_interval: Duration,
         executor: Arc<NftExecutor>,
     ) -> Self {
         Self {
-            handle,
             interface,
             stats,
             update_interval,
@@ -62,13 +59,20 @@ impl TrafficMonitor {
         loop {
             interval.tick().await;
 
+            let start = tokio::time::Instant::now();
             if let Err(e) = self.update_traffic_stats_per_ip().await {
                 error!("更新流量统计失败: {:?}", e);
                 continue;
             }
 
+            let elapsed = start.elapsed();
+            debug!("update_traffic_stats_per_ip elapsed: {:?}", elapsed);
+
+            let start = tokio::time::Instant::now();
             // 清理过期的流量统计
-            self.cleanup_expired_stats().await;
+            self.cleanup_expired_stats().await?;
+            let elapsed = start.elapsed();
+            debug!("cleanup_expired_stats elapsed: {:?}", elapsed);
         }
     }
 
@@ -201,9 +205,13 @@ impl TrafficMonitor {
 
         let active_ips = self.get_active_ips().await?;
 
-        for ip in active_ips {
-            self.ensure_ip_counter_rules(ip).await?;
-        }
+        stream::iter(active_ips)
+            .for_each_concurrent(4, |ip| async move {
+                if let Err(e) = self.ensure_ip_counter_rules(ip).await {
+                    error!("ensure counter for ip: {} failed: {:?}", ip, e);
+                }
+            })
+            .await;
 
         Ok(())
     }
@@ -308,10 +316,6 @@ impl TrafficMonitor {
             connections.extend(udp_connections);
         }
 
-        if connections.is_empty() {
-            connections.extend(self.get_local_ips().await?);
-        }
-
         Ok(connections)
     }
 
@@ -400,25 +404,6 @@ impl TrafficMonitor {
         }
     }
 
-    /// 获取本地IP地址
-    async fn get_local_ips(&self) -> anyhow::Result<Vec<IpAddr>> {
-        let mut ips = Vec::new();
-        let mut addresses = self.handle.address().get().execute();
-
-        while let Some(msg) = addresses.try_next().await? {
-            for attr in &msg.attributes {
-                if let netlink_packet_route::address::AddressAttribute::Address(ip_addr) = attr {
-                    let ip = ip_addr.to_canonical();
-                    if !ip.is_loopback() {
-                        ips.push(ip);
-                    }
-                }
-            }
-        }
-
-        Ok(ips)
-    }
-
     /// 更新统计数据
     async fn update_stats_from_ip_data(
         &self,
@@ -472,12 +457,12 @@ impl TrafficMonitor {
     }
 
     /// 清理过期的流量统计
-    async fn cleanup_expired_stats(&self) {
+    async fn cleanup_expired_stats(&self) -> anyhow::Result<()> {
         let now = Instant::now();
         let expire_duration = Duration::from_secs(EXPIRE_DURATION_SEC);
         let mut counters_to_remove: Vec<_> = Vec::new();
 
-        self.stats.retain(|ip, stats| {
+        self.stats.retain(|_ip, stats| {
             if now.duration_since(stats.last_updated) < expire_duration {
                 true
             } else {
@@ -489,8 +474,9 @@ impl TrafficMonitor {
         });
 
         for handles in counters_to_remove {
-            let result = self.remove_counter_rules(&handles).await;
+            self.remove_counter_rules(&handles).await?;
         }
+        Ok(())
     }
 
     /// 清理 nftables 规则

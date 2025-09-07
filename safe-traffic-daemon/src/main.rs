@@ -1,7 +1,6 @@
 mod controller; // nftables 控制
 mod daemon;
 mod error;
-mod logger;
 mod monitor; // 流量监控
 mod nft;
 mod rules; // 规则引擎 // 日志记录
