@@ -3,6 +3,7 @@ use dashmap::DashMap;
 use futures::{stream, stream::StreamExt};
 use log::{debug, error, warn};
 
+use anyhow::Result;
 use safe_traffic_common::utils::TrafficStats;
 use std::{
     collections::{HashMap, HashSet},
@@ -52,7 +53,7 @@ impl TrafficMonitor {
     }
 
     /// 启动流量监控
-    pub async fn start(&self) -> anyhow::Result<()> {
+    pub async fn start(&self) -> Result<()> {
         self.setup_nft_table_structure().await?;
         let mut interval = time::interval(self.update_interval);
 
@@ -77,16 +78,14 @@ impl TrafficMonitor {
     }
 
     /// 更新每个IP的流量统计
-    async fn update_traffic_stats_per_ip(&self) -> anyhow::Result<()> {
+    async fn update_traffic_stats_per_ip(&self) -> Result<()> {
         let ip_stats = self.get_traffic_via_nftables_json().await?;
         self.update_stats_from_ip_data(ip_stats).await?;
         Ok(())
     }
 
     /// 通过 nftables JSON 格式获取流量统计
-    async fn get_traffic_via_nftables_json(
-        &self,
-    ) -> anyhow::Result<HashMap<IpAddr, NftTrafficStats>> {
+    async fn get_traffic_via_nftables_json(&self) -> Result<HashMap<IpAddr, NftTrafficStats>> {
         let mut ip_stats = HashMap::new();
 
         // 确保规则存在
@@ -113,7 +112,7 @@ impl TrafficMonitor {
         json_output: &str,
         ip_stats: &mut HashMap<IpAddr, NftTrafficStats>,
         direction: &str,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let nft_data: NftJsonOutput = serde_json::from_str(json_output)
             .map_err(|e| anyhow::anyhow!("解析 NFT JSON 失败: {}", e))?;
 
@@ -200,7 +199,7 @@ impl TrafficMonitor {
     }
 
     /// 确保 nftables 规则存在
-    async fn ensure_nftables_rules(&self) -> anyhow::Result<()> {
+    async fn ensure_nftables_rules(&self) -> Result<()> {
         // self.setup_nft_table_structure().await?;
 
         let active_ips = self.get_active_ips().await?;
@@ -217,7 +216,10 @@ impl TrafficMonitor {
     }
 
     /// 设置 nftables 表和链结构
-    async fn setup_nft_table_structure(&self) -> anyhow::Result<()> {
+    async fn setup_nft_table_structure(&self) -> Result<()> {
+        self.executor
+            .input("delete table inet traffic_monitor")
+            .await?;
         let commands = vec![
             "add table inet traffic_monitor".to_string(),
             "add chain inet traffic_monitor input_stats { type filter hook input priority -100; policy accept; }".to_string(),
@@ -238,7 +240,7 @@ impl TrafficMonitor {
     }
 
     /// 为特定IP确保计数器规则存在
-    async fn ensure_ip_counter_rules(&self, ip: IpAddr) -> anyhow::Result<()> {
+    async fn ensure_ip_counter_rules(&self, ip: IpAddr) -> Result<()> {
         let ip_family = match ip {
             IpAddr::V4(_) => "ip",
             IpAddr::V6(_) => "ip6",
@@ -274,7 +276,7 @@ impl TrafficMonitor {
     }
 
     /// 获取活跃的IP地址
-    async fn get_active_ips(&self) -> anyhow::Result<Vec<IpAddr>> {
+    async fn get_active_ips(&self) -> Result<Vec<IpAddr>> {
         let mut ips = Vec::new();
 
         // 从现有统计中获取
@@ -297,13 +299,13 @@ impl TrafficMonitor {
     }
 
     #[allow(dead_code)]
-    async fn is_ip_active(&self, ip: &IpAddr) -> anyhow::Result<bool> {
+    async fn is_ip_active(&self, ip: &IpAddr) -> Result<bool> {
         let ips = self.get_active_connections().await?;
         Ok(ips.contains(ip))
     }
 
     /// 获取活跃的网络连接IP地址
-    async fn get_active_connections(&self) -> anyhow::Result<HashSet<IpAddr>> {
+    async fn get_active_connections(&self) -> Result<HashSet<IpAddr>> {
         let mut connections = HashSet::new();
 
         // 从 /proc/net/tcp* 读取连接信息
@@ -320,7 +322,7 @@ impl TrafficMonitor {
     }
 
     /// 解析 /proc/net/tcp* 文件
-    async fn parse_proc_net_tcp(&self) -> anyhow::Result<Vec<IpAddr>> {
+    async fn parse_proc_net_tcp(&self) -> Result<Vec<IpAddr>> {
         let mut ips = Vec::new();
 
         if let Ok(content) = tokio::fs::read_to_string("/proc/net/tcp").await {
@@ -335,7 +337,7 @@ impl TrafficMonitor {
     }
 
     /// 解析 /proc/net/udp* 文件
-    async fn parse_proc_net_udp(&self) -> anyhow::Result<Vec<IpAddr>> {
+    async fn parse_proc_net_udp(&self) -> Result<Vec<IpAddr>> {
         let mut ips = Vec::new();
 
         if let Ok(content) = tokio::fs::read_to_string("/proc/net/udp").await {
@@ -350,7 +352,7 @@ impl TrafficMonitor {
     }
 
     /// 解析网络文件内容
-    fn parse_net_file_content(&self, content: &str, is_ipv6: bool) -> anyhow::Result<Vec<IpAddr>> {
+    fn parse_net_file_content(&self, content: &str, is_ipv6: bool) -> Result<Vec<IpAddr>> {
         let mut ips = Vec::new();
 
         for line in content.lines().skip(1) {
@@ -373,7 +375,7 @@ impl TrafficMonitor {
     }
 
     /// 解析地址字符串
-    fn parse_address(&self, addr_str: &str, is_ipv6: bool) -> anyhow::Result<IpAddr> {
+    fn parse_address(&self, addr_str: &str, is_ipv6: bool) -> Result<IpAddr> {
         let parts: Vec<&str> = addr_str.split(':').collect();
         if parts.len() != 2 {
             anyhow::bail!("无效的地址格式: {}", addr_str);
@@ -408,7 +410,7 @@ impl TrafficMonitor {
     async fn update_stats_from_ip_data(
         &self,
         ip_stats: HashMap<IpAddr, NftTrafficStats>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         for (ip, new_stats) in ip_stats {
             // let mut stats = self.stats.entry(ip).or_default();
             let mut stats = self.stats.entry(ip).or_insert_with(|| {
@@ -439,7 +441,7 @@ impl TrafficMonitor {
         Ok(())
     }
 
-    async fn remove_counter_rules(&self, handles: &(String, String)) -> anyhow::Result<()> {
+    async fn remove_counter_rules(&self, handles: &(String, String)) -> Result<()> {
         let remove_input_stats_command = format!(
             "delete rule inet traffic_monitor input_stats   handle {}",
             &handles.0
@@ -457,7 +459,7 @@ impl TrafficMonitor {
     }
 
     /// 清理过期的流量统计
-    async fn cleanup_expired_stats(&self) -> anyhow::Result<()> {
+    async fn cleanup_expired_stats(&self) -> Result<()> {
         let now = Instant::now();
         let expire_duration = Duration::from_secs(EXPIRE_DURATION_SEC);
         let mut counters_to_remove: Vec<_> = Vec::new();
@@ -481,7 +483,7 @@ impl TrafficMonitor {
 
     /// 清理 nftables 规则
     #[allow(dead_code)]
-    pub async fn cleanup_nftables_rules(&self) -> anyhow::Result<()> {
+    pub async fn cleanup_nftables_rules(&self) -> Result<()> {
         warn!("intend to clean up monitor");
         self.executor
             .input("delete table inet traffic_monitor")

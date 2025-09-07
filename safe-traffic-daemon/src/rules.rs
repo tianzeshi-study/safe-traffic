@@ -4,6 +4,7 @@ use safe_traffic_common::{
     utils::{ControlSignal, RunState, SignalController, TrafficStats},
 };
 
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use dashmap::{DashMap, DashSet};
 use futures::stream::{self, StreamExt, TryStreamExt};
@@ -96,7 +97,7 @@ impl RuleEngine {
     }
 
     /// 检查所有 IP 并在必要时调用防火墙控制
-    pub async fn check_and_apply(&self) -> anyhow::Result<()> {
+    pub async fn check_and_apply(&self) -> Result<()> {
         let fw_origin = self.firewall.clone();
         let now = Utc::now();
         // 遍历每个 IP 的最新流量
@@ -182,10 +183,7 @@ impl RuleEngine {
                             .iter()
                             .cycle()
                             .skip({
-                                
-
-                                (win.pos + win.buffer.len() - window_size + 1)
-                                    % win.buffer.len()
+                                (win.pos + win.buffer.len() - window_size + 1) % win.buffer.len()
                             })
                             .take(window_size)
                             .sum();
@@ -262,11 +260,7 @@ impl RuleEngine {
     }
 
     // clean expiration rules
-    async fn clean_expiration_rules(
-        &self,
-        rule: &Rule,
-        ip: IpAddr,
-    ) -> anyhow::Result<(usize, usize)> {
+    async fn clean_expiration_rules(&self, rule: &Rule, ip: IpAddr) -> Result<(usize, usize)> {
         let fw = self.firewall.clone();
         let mut rules_num = 0;
         let mut removed_rules_num = 0;
@@ -305,7 +299,7 @@ impl RuleEngine {
     }
 
     /// 启动规则引擎主循环，支持暂停/恢复/停止
-    pub async fn start(&self, check_interval: Duration) -> anyhow::Result<()> {
+    pub async fn start(&self, check_interval: Duration) -> Result<()> {
         info!("RuleEngine starting...");
 
         // 创建控制信号通道
@@ -396,7 +390,7 @@ impl RuleEngine {
         seconds: Option<u64>,
         window_secs: Option<u64>,
         threshold_bps: Option<u64>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let mut rule = Rule {
             action: Action::Ban { seconds },
             ..Default::default() // 其他字段保持默认
@@ -429,7 +423,7 @@ impl RuleEngine {
         seconds: Option<u64>,
         window_secs: Option<u64>,
         threshold_bps: Option<u64>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let mut rule = Rule {
             action: Action::RateLimit {
                 kbps,
@@ -463,7 +457,7 @@ impl RuleEngine {
         seconds: Option<u64>,
         window_secs: Option<u64>,
         threshold_bps: Option<u64>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>> {
         let mut rule = Rule {
             action: Action::Ban { seconds },
             ..Default::default() // 其他字段保持默认
@@ -496,7 +490,7 @@ impl RuleEngine {
         seconds: Option<u64>,
         window_secs: Option<u64>,
         threshold_bps: Option<u64>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>> {
         let mut rule = Rule {
             action: Action::RateLimit {
                 kbps,
