@@ -1,5 +1,11 @@
-safe-traffic (0.2.0-1) UNRELEASED; urgency=medium
+safe-traffic (0.3.0-1) UNRELEASED; urgency=medium
 
+  [ root ]
   * Initial release. (Closes: #nnnn)  <nnnn is the bug number of your ITP>
 
- -- root <tianzeshi_study@outlook.com>  Tue, 08 Jul 2025 16:13:16 +0800
+  [ tianzeshi ]
+  * Unify Cargo.toml edition to 2021
+  * ignore Cargo.lock file in repository
+  * add cargo as build dependency for debian package
+
+ -- HALOS <tianzeshi_study@outlook.com>  Sun, 07 Sep 2025 17:18:59 +0800

@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/sbin/safe-traffic-daemon   --config /etc/safe-traffic/example.toml
-Restart=on-failure
+ExecStart=/usr/bin/safe-traffic-daemon   --config /usr/etc/safe-traffic/default.toml
+Restart=no
 User=root
 
 [Install]
