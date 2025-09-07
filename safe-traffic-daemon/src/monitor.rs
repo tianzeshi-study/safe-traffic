@@ -299,7 +299,7 @@ impl TrafficMonitor {
     #[allow(dead_code)]
     async fn is_ip_active(&self, ip: &IpAddr) -> anyhow::Result<bool> {
         let ips = self.get_active_connections().await?;
-        Ok(ips.contains(&ip))
+        Ok(ips.contains(ip))
     }
 
     /// 获取活跃的网络连接IP地址
@@ -417,8 +417,8 @@ impl TrafficMonitor {
             });
 
             // 计算增量
-            let rx_delta = new_stats.rx_bytes.saturating_sub(stats.rx_bytes.clone());
-            let tx_delta = new_stats.tx_bytes.saturating_sub(stats.tx_bytes.clone());
+            let rx_delta = new_stats.rx_bytes.saturating_sub(stats.rx_bytes);
+            let tx_delta = new_stats.tx_bytes.saturating_sub(stats.tx_bytes);
 
             // 更新统计
             stats.rx_bytes = new_stats.rx_bytes;

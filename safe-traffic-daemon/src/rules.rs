@@ -145,7 +145,7 @@ impl RuleEngine {
         stream::iter(ips)
             .filter(|ip| {
                 let fw_origin = &fw_origin;
-                let ip = ip.clone();
+                let ip = *ip;
                 async move { !fw_origin.is_excluded(&ip).await }
             })
             .map(Ok::<_, anyhow::Error>)
@@ -182,10 +182,10 @@ impl RuleEngine {
                             .iter()
                             .cycle()
                             .skip({
-                                let skip = (win.pos + win.buffer.len() - window_size + 1)
-                                    % win.buffer.len();
+                                
 
-                                skip
+                                (win.pos + win.buffer.len() - window_size + 1)
+                                    % win.buffer.len()
                             })
                             .take(window_size)
                             .sum();
@@ -398,7 +398,7 @@ impl RuleEngine {
         threshold_bps: Option<u64>,
     ) -> anyhow::Result<()> {
         let mut rule = Rule {
-            action: Action::Ban { seconds: seconds },
+            action: Action::Ban { seconds },
             ..Default::default() // 其他字段保持默认
         };
         if let Some(window_secs) = window_secs {
@@ -465,7 +465,7 @@ impl RuleEngine {
         threshold_bps: Option<u64>,
     ) -> anyhow::Result<Vec<String>> {
         let mut rule = Rule {
-            action: Action::Ban { seconds: seconds },
+            action: Action::Ban { seconds },
             ..Default::default() // 其他字段保持默认
         };
         if let Some(window_secs) = window_secs {

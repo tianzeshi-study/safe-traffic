@@ -945,7 +945,7 @@ impl Controllable for IpAddr {
         seconds: Option<u64>,
         controller: &Self::Controller,
     ) -> Result<Vec<String>> {
-        let rule_id = controller.ban(self.clone(), seconds).await?;
+        let rule_id = controller.ban(*self, seconds).await?;
         Ok(vec![rule_id])
     }
 
@@ -956,7 +956,7 @@ impl Controllable for IpAddr {
         seconds: Option<u64>,
         controller: &Self::Controller,
     ) -> Result<Vec<String>> {
-        let rule_id = controller.limit(self.clone(), kbps, burst, seconds).await?;
+        let rule_id = controller.limit(*self, kbps, burst, seconds).await?;
         Ok(vec![rule_id])
     }
 
@@ -1005,7 +1005,7 @@ impl Controllable for safe_traffic_common::transport::Request {
         controller: &Self::Controller,
     ) -> Result<Vec<String>> {
         let rule_ids = match self {
-            Self::BatchBan { ips, seconds } => ips.ban(*seconds, &controller).await?,
+            Self::BatchBan { ips, seconds } => ips.ban(*seconds, controller).await?,
             _ => {
                 unimplemented!()
             }
@@ -1046,7 +1046,7 @@ impl Controllable for IpNet {
         seconds: Option<u64>,
         controller: &Self::Controller,
     ) -> Result<Vec<String>> {
-        let rule_id = controller.ban_cidr(self.clone(), seconds).await?;
+        let rule_id = controller.ban_cidr(*self, seconds).await?;
         Ok(vec![rule_id])
     }
 
@@ -1058,7 +1058,7 @@ impl Controllable for IpNet {
         controller: &Self::Controller,
     ) -> Result<Vec<String>> {
         let rule_id = controller
-            .limit_cidr(self.clone(), kbps, burst, seconds)
+            .limit_cidr(*self, kbps, burst, seconds)
             .await?;
         Ok(vec![rule_id])
     }
@@ -1079,7 +1079,7 @@ impl Controllable for Vec<IpNet> {
     ) -> Result<Vec<String>> {
         let mut rule_ids = Vec::with_capacity(self.len());
         for cidr in self {
-            let mut rule_vec = cidr.ban(seconds, &controller).await?;
+            let mut rule_vec = cidr.ban(seconds, controller).await?;
             rule_ids.append(&mut rule_vec);
         }
 
@@ -1095,7 +1095,7 @@ impl Controllable for Vec<IpNet> {
     ) -> Result<Vec<String>> {
         let mut rule_ids = Vec::with_capacity(self.len());
         for cidr in self {
-            let mut rule_vec = cidr.limit(kbps, burst, seconds, &controller).await?;
+            let mut rule_vec = cidr.limit(kbps, burst, seconds, controller).await?;
             rule_ids.append(&mut rule_vec);
         }
 

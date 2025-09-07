@@ -1,6 +1,6 @@
 [package]
 name = "safe-traffic-daemon"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Hal Articode "]
 license = "MIT"
@@ -22,7 +22,7 @@ futures = {workspace=true}
 serde_json = {workspace=true}
 ipnet = {workspace=true}
 async-trait = "0.1.89"
-safe-traffic-common = { version = "0.2.0", path = "../safe-traffic-common" }
+safe-traffic-common = { version = "0.3.0", path = "../safe-traffic-common" }
 
 
 

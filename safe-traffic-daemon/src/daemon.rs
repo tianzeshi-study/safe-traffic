@@ -188,7 +188,7 @@ impl TrafficDaemon {
                         for (i, ip) in ips.iter().enumerate() {
                             let _ = engine
                                 .add_limit_rule_by_hand(
-                                    ip.clone(),
+                                    *ip,
                                     rule_ids[i].clone(),
                                     kbps,
                                     burst,
@@ -225,7 +225,7 @@ impl TrafficDaemon {
                 seconds,
             } => {
                 match engine
-                    .dyn_limit(Box::new(cidr.clone()), kbps, burst, seconds, None, None)
+                    .dyn_limit(Box::new(cidr), kbps, burst, seconds, None, None)
                     .await
                 {
                     Ok(rule_ids) => {
@@ -310,7 +310,7 @@ impl TrafficDaemon {
                         for (i, ip) in ips.iter().enumerate() {
                             let _ = engine
                                 .add_ban_rule_by_hand(
-                                    ip.clone(),
+                                    *ip,
                                     rule_ids[i].clone(),
                                     seconds,
                                     None,
@@ -339,7 +339,7 @@ impl TrafficDaemon {
 
             Request::BanCidr { cidr, seconds } => {
                 match engine
-                    .dyn_block(Box::new(cidr.clone()), seconds, None, None)
+                    .dyn_block(Box::new(cidr), seconds, None, None)
                     .await
                 {
                     Ok(rule_ids) => {

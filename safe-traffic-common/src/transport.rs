@@ -93,7 +93,7 @@ pub enum ResponseData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ipnet::Ipv4Net;
+    
     use std::net::Ipv4Addr;
 
     #[test]
