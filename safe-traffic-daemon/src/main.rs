@@ -8,6 +8,7 @@ mod tasks;
 
 use safe_traffic_common::config;
 
+use anyhow::{Context, Result};
 use clap::Parser;
 use config::Config;
 use env_logger::Env;
@@ -23,7 +24,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     // 初始化日志（可通过环境变量 RUST_LOG 调节级别）
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     // 解析命令行参数
@@ -32,6 +33,17 @@ async fn main() -> anyhow::Result<()> {
     // 读取并验证配置
     let cfg = Config::from_file(&args.config)?;
     let nft_available = crate::nft::check_nftables_available().await?;
+
+    // 删除已存在的nft-stderr.log
+    let mut temp_path: std::path::PathBuf = std::env::temp_dir();
+    temp_path.push("nft-stderr.log");
+    if tokio::fs::metadata(&temp_path).await.is_ok() {
+        let mut backup_path = temp_path.clone();
+        backup_path.set_file_name("nft-stderr-old.log");
+        tokio::fs::rename(&temp_path, &backup_path)
+            .await
+            .with_context(|| format!("Failed to rename {:?} to {:?}", temp_path, backup_path))?;
+    }
 
     // 创建执行器池
     let max_pool_size = cfg.executor_pool_size.unwrap_or(5);

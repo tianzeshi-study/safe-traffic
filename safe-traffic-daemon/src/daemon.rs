@@ -309,13 +309,7 @@ impl TrafficDaemon {
                     Ok(rule_ids) => {
                         for (i, ip) in ips.iter().enumerate() {
                             let _ = engine
-                                .add_ban_rule_by_hand(
-                                    *ip,
-                                    rule_ids[i].clone(),
-                                    seconds,
-                                    None,
-                                    None,
-                                )
+                                .add_ban_rule_by_hand(*ip, rule_ids[i].clone(), seconds, None, None)
                                 .await;
                         }
                         let seconds: String = seconds
@@ -338,10 +332,7 @@ impl TrafficDaemon {
             }
 
             Request::BanCidr { cidr, seconds } => {
-                match engine
-                    .dyn_block(Box::new(cidr), seconds, None, None)
-                    .await
-                {
+                match engine.dyn_block(Box::new(cidr), seconds, None, None).await {
                     Ok(rule_ids) => {
                         let seconds: String = seconds
                             .map(|s| s.to_string())

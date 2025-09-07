@@ -8,9 +8,9 @@ use std::path::PathBuf;
 use crate::client::TrafficClient;
 
 #[derive(Parser)]
-#[command(name = "traffic-cli")]
+#[command(name = "safe-traffic-cli")]
 #[command(about = "A CLI tool for traffic control and firewall management")]
-#[command(version = "1.0")]
+#[command(version = "0.3.0")]
 struct Cli {
     /// Unix socket path to connect to the traffic daemon
     #[arg(short, long, default_value = "/run/traffic.sock")]

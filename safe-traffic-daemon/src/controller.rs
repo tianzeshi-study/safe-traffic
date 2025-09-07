@@ -75,6 +75,9 @@ impl Firewall {
     /// 检查 nftables 是否可用
     /// 初始化 nftables 表和链
     async fn init_table_and_chain(&self) -> Result<()> {
+        self.executor
+            .input(&format!("delete table {} {}", self.family, self.table_name))
+            .await?;
         let commands = vec![
             format!("add table {} {}", self.family, self.table_name),
             format!(
@@ -1057,9 +1060,7 @@ impl Controllable for IpNet {
         seconds: Option<u64>,
         controller: &Self::Controller,
     ) -> Result<Vec<String>> {
-        let rule_id = controller
-            .limit_cidr(*self, kbps, burst, seconds)
-            .await?;
+        let rule_id = controller.limit_cidr(*self, kbps, burst, seconds).await?;
         Ok(vec![rule_id])
     }
 
