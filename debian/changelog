@@ -8,4 +8,21 @@ safe-traffic (0.3.0-1) UNRELEASED; urgency=medium
   * ignore Cargo.lock file in repository
   * add cargo as build dependency for debian package
 
- -- HALOS <tianzeshi_study@outlook.com>  Sun, 07 Sep 2025 17:18:59 +0800
+  [ hal ]
+  * correct sliding window; improve memory useage; move nft-stderr to temp directory
+  * change example config location; change rules collection from Vec to HashSet
+  * removed idle windows
+  * remove aging windows to improve memory usage
+
+  [ Tianze ]
+  * remove outdated  stats
+  * improve rate limit logic
+  * Optimize the time complexity of checking whether the rule exists
+  * auto remove firewall rule added by hand
+  * add cidr ban function for firewall
+  * Refactoring the rule engine with firewall controller
+  * improve memory useage
+  * clippy and optimize
+  * handle old log file and old rules before starting
+
+ -- HALOS <tianzeshi_study@outlook.com>  Sun, 07 Sep 2025 21:56:28 +0800
