@@ -1,6 +1,6 @@
 [package]
 name = "safe-traffic-daemon"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Hal Articode "]
 license = "MIT"
@@ -12,18 +12,17 @@ tokio = {workspace=true}
 clap = {workspace=true}
 serde = {workspace=true}
 toml = "0.5"                                               # TOML 解析
-rtnetlink = "0.16"                                          # Netlink 监听
 dashmap = "5"                                              # 并发哈希表
 log = {workspace=true}
 env_logger = "0.10"                                        # 日志实现
 chrono = {workspace=true}
 anyhow = {workspace=true}
 thiserror = "1.0"
-
 futures = {workspace=true}
 serde_json = {workspace=true}
-netlink-packet-route = "0.22"
-safe-traffic-common = { version = "0.2.0", path = "../safe-traffic-common" }
+ipnet = {workspace=true}
+async-trait = "0.1.89"
+safe-traffic-common = { version = "0.3.0", path = "../safe-traffic-common" }
 
 
 

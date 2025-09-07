@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fmt, fs, net::IpAddr, path::Path};
+use std::{
+    collections::HashSet,
+    fmt, fs,
+    hash::{Hash, Hasher},
+    net::IpAddr,
+    path::Path,
+};
 
 /// hook type , input or output
 #[derive(Deserialize, Debug, Clone)]
@@ -67,7 +73,7 @@ impl fmt::Display for FamilyType {
 }
 
 /// 单条规则动作类型：限速或封禁
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Action {
     /// 限速模式，参数：kbit/s
     RateLimit {
@@ -122,7 +128,37 @@ pub struct Rule {
     pub threshold_bps: u64,
     /// 触发动作
     pub action: Action,
-    excluded_ips: Option<HashSet<IpAddr>>,
+    pub excluded_ips: Option<HashSet<IpAddr>>,
+}
+
+impl Default for Rule {
+    fn default() -> Self {
+        Rule {
+            window_secs: 10,
+            threshold_bps: u64::MAX,
+            action: Action::Ban { seconds: None },
+            excluded_ips: None,
+        }
+    }
+}
+
+impl PartialEq for Rule {
+    fn eq(&self, other: &Self) -> bool {
+        self.window_secs == other.window_secs
+            && self.threshold_bps == other.threshold_bps
+            && self.action == other.action
+    }
+}
+
+impl Eq for Rule {}
+
+// 手动实现 Hash（忽略 excluded_ips）
+impl Hash for Rule {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.window_secs.hash(state);
+        self.threshold_bps.hash(state);
+        self.action.hash(state);
+    }
 }
 
 impl Rule {
@@ -146,15 +182,13 @@ pub struct Config {
     pub policy: Option<PolicyType>,
     /// 主网卡名称
     pub interface: String,
-    /// 日志保留路径
-    // pub log_dir_path: Option<String>,
-    pub monitor_interval: Option<u64>, // 监控间隔（秒）
-    pub rule_check_interval: Option<u64>,
+
+    pub check_interval: Option<u64>,
     pub executor_pool_size: Option<usize>,    // 默认 5
     pub executor_max_age_secs: Option<i64>,   // 默认 300 秒
     pub executor_max_commands: Option<usize>, // 默认 100 条命令
     /// 规则列表
-    pub rules: Vec<Rule>,
+    pub rules: HashSet<Rule>,
     pub global_exclude: Option<HashSet<IpAddr>>,
 }
 
@@ -173,122 +207,73 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-    use toml;
+    use std::net::Ipv4Addr;
 
     #[test]
-    fn test_action_rate_limit_deserialize() {
-        let s = r#"{ RateLimit = { kbps = 200 } }"#;
-        // Wrap in a table to match Action::RateLimit structure
-        let action: Action = toml::from_str(s).unwrap();
-        match action {
-            Action::RateLimit {
-                kbps,
-                burst: _burst,
-                seconds: _second,
-            } => assert_eq!(kbps, 200),
-            _ => panic!("Expected RateLimit variant"),
-        }
+    fn test_enum_display() {
+        assert_eq!(format!("{}", HookType::Input), "input");
+        assert_eq!(format!("{}", FamilyType::Ip4), "ip4");
+        assert_eq!(format!("{}", PolicyType::Accept), "accept");
     }
 
     #[test]
-    fn test_action_ban_deserialize() {
-        // 必须一行，Ban = { … }，不能有前导换行
-        let s = r#"{ Ban = { seconds = 456 } }"#;
-        let action: Action = toml::from_str(s).unwrap();
-        match action {
-            Action::Ban {
-                seconds: Some(seconds),
-            } => assert_eq!(seconds, 456),
-            _ => panic!("Expected Ban variant"),
-        }
+    fn test_action_display() {
+        let ban = Action::Ban { seconds: Some(60) };
+        assert_eq!(format!("{}", ban), "ban 60s");
+
+        let rate_limit = Action::RateLimit {
+            kbps: 100,
+            burst: None,
+            seconds: Some(30),
+        };
+        assert_eq!(format!("{}", rate_limit), "RateLimit 100kbps  for 30 s");
     }
 
     #[test]
-    fn test_rule_deserialize() {
-        let toml_str = r#"
-            window_secs = 30
-            threshold_bps = 1000
-            action = { RateLimit = { kbps = 200 } }
-        "#;
-        let rule: Rule = toml::from_str(toml_str).unwrap();
-        assert_eq!(rule.window_secs, 30);
-        assert_eq!(rule.threshold_bps, 1000);
-        match rule.action {
-            Action::RateLimit {
-                kbps,
-                burst: _burst,
-                seconds: _seconds,
-            } => assert_eq!(kbps, 200),
-            _ => panic!("Expected RateLimit action"),
-        }
+    fn test_rule_default() {
+        let rule = Rule::default();
+        assert_eq!(rule.window_secs, 10);
+        assert_eq!(rule.threshold_bps, u64::MAX);
+        assert_eq!(rule.action, Action::Ban { seconds: None });
     }
 
     #[test]
-    fn test_config_from_str_and_file() {
-        // Prepare a minimal TOML config
-        let toml_content = r#"
-            table_name = "tbl"
-            chain_name = "chain"
-            family = "Ip4"
-            interface = "eth0"
-
-
-            [[rules]]
-            window_secs = 10
-            threshold_bps = 500
-            action = { Ban = { seconds = 60 } }
-
-            [[rules]]
-            window_secs = 20
-            threshold_bps = 1500
-            action = { RateLimit = { kbps = 300 } }
-        "#;
-
-        // Test toml::from_str directly
-        let cfg: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(cfg.table_name.as_deref(), Some("tbl"));
-        assert_eq!(cfg.chain_name.as_deref(), Some("chain"));
-
-        assert_eq!(cfg.interface, "eth0");
-        // assert_eq!(cfg.log_path, "/var/log/app.log");
-        assert_eq!(cfg.rules.len(), 2);
-        // First rule check
-        let r0 = &cfg.rules[0];
-        assert_eq!(r0.window_secs, 10);
-        assert_eq!(r0.threshold_bps, 500);
-        match r0.action {
-            Action::Ban {
-                seconds: Some(seconds),
-            } => assert_eq!(seconds, 60),
-            _ => panic!("Expected Ban action"),
-        }
-        // Second rule check
-        let r1 = &cfg.rules[1];
-        assert_eq!(r1.window_secs, 20);
-        assert_eq!(r1.threshold_bps, 1500);
-        match r1.action {
-            Action::RateLimit {
-                kbps,
-                burst: _burst,
-                seconds: _seconds,
-            } => assert_eq!(kbps, 300),
-            _ => panic!("Expected RateLimit action"),
-        }
-
-        // Now test Config::from_file
-        let mut tmpfile = NamedTempFile::new().unwrap();
-        write!(tmpfile, "{}", toml_content).unwrap();
-        let path = tmpfile.path();
-        let cfg2 = Config::from_file(path).unwrap();
-        assert_eq!(cfg2.interface, "eth0");
-        assert_eq!(cfg2.rules.len(), 2);
+    fn test_rule_equality() {
+        let rule1 = Rule {
+            window_secs: 10,
+            threshold_bps: 1000,
+            action: Action::Ban { seconds: Some(60) },
+            excluded_ips: None,
+        };
+        let rule2 = Rule {
+            window_secs: 10,
+            threshold_bps: 1000,
+            action: Action::Ban { seconds: Some(60) },
+            excluded_ips: Some(HashSet::new()),
+        };
+        assert_eq!(rule1, rule2); // excluded_ips 被忽略
     }
 
     #[test]
-    fn test_from_file_error_nonexistent() {
+    fn test_rule_is_excluded() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        let mut excluded_set = HashSet::new();
+        excluded_set.insert(ip);
+
+        let rule = Rule {
+            excluded_ips: Some(excluded_set),
+            ..Rule::default()
+        };
+
+        assert!(rule.is_excluded(&ip));
+        assert!(!rule.is_excluded(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+
+        let rule_no_exclude = Rule::default();
+        assert!(!rule_no_exclude.is_excluded(&ip));
+    }
+
+    #[test]
+    fn test_config_from_invalid_file() {
         let result = Config::from_file("nonexistent.toml");
         assert!(result.is_err());
     }

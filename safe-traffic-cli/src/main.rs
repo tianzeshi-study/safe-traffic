@@ -1,11 +1,10 @@
 mod client;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use ipnet::IpNet;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-// 假设这些类型在你的项目中已定义
-// 如果需要，请调整导入路径
 use crate::client::TrafficClient;
 
 #[derive(Parser)]
@@ -34,19 +33,73 @@ enum Commands {
         /// Burst limit (optional)
         #[arg(short, long)]
         burst: Option<u64>,
-        /// Duration in seconds
+        /// Duration in seconds,(omit for permanent LIMITATION)
         #[arg(short, long)]
         seconds: Option<u64>,
     },
+
+    /// Limit traffic for specific IP addresses,, use space separation between IPs
+    BatchLimit {
+        /// IP addresses to limit
+        #[arg(value_name = "IPs")]
+        ips: Vec<IpAddr>,
+        /// Speed limit in kbps
+        #[arg(short, long)]
+        kbps: u64,
+        /// Burst limit (optional)
+        #[arg(short, long)]
+        burst: Option<u64>,
+        /// Duration in seconds(omit for permanent LIMITATION)
+        #[arg(short, long)]
+        seconds: Option<u64>,
+    },
+
+    /// Limit traffic for a specific CIDR
+    LimitCidr {
+        /// CIDR to limit
+        #[arg(value_name = "CIDR")]
+        cidr: IpNet,
+        /// Speed limit in kbps
+        #[arg(short, long)]
+        kbps: u64,
+        /// Burst limit (optional)
+        #[arg(short, long)]
+        burst: Option<u64>,
+        /// Duration in seconds,(omit for permanent LIMITATION)
+        #[arg(short, long)]
+        seconds: Option<u64>,
+    },
+
     /// Ban an IP address for a specific duration
     Ban {
         /// IP address to ban
         #[arg(value_name = "IP")]
         ip: IpAddr,
-        /// Duration in seconds
+        /// Duration in seconds(omit for permanent ban)
         #[arg(short, long)]
         seconds: Option<u64>,
     },
+
+    /// Batch ban several IP addresses for a specific duration, use space separation between IPs
+    BatchBan {
+        /// IP addresses to ban
+        #[arg(value_name = "IPs")]
+        ips: Vec<IpAddr>,
+        /// Duration in seconds(omit for permanent ban)
+        #[arg(short, long)]
+        seconds: Option<u64>,
+    },
+
+    /// Ban a CIDR for a specific duration
+    BanCidr {
+        /// CIDR to ban (e.g. 192.168.1.0/24)
+        #[arg(value_name = "CIDR")]
+        cidr: IpNet,
+        /// Duration in seconds (omit for permanent ban)
+        #[arg(short, long)]
+        seconds: Option<u64>,
+    },
+
     /// Remove a ban or limit rule by rule ID
     Unblock {
         /// Rule ID to remove
@@ -114,6 +167,52 @@ async fn main() -> Result<()> {
             }
         },
 
+        Commands::BatchLimit {
+            ips,
+            kbps,
+            burst,
+            seconds,
+        } => match client.batch_limit(ips.clone(), kbps, burst, seconds).await {
+            Ok(rule_ids) => {
+                println!("Traffic limit applied successfully!");
+                for (i, rule_id) in rule_ids.iter().enumerate() {
+                    print!("Rule ID: {}    ", rule_id);
+                    print!("IP: {}    ", ips[i].clone());
+                    println!("Speed limit: {} kbps", kbps);
+                }
+                if let Some(burst) = burst {
+                    println!("Burst limit: {} kb", burst);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to apply traffic limit: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::LimitCidr {
+            cidr,
+            kbps,
+            burst,
+            seconds,
+        } => match client.limit_cidr(cidr, kbps, burst, seconds).await {
+            Ok(rule_ids) => {
+                println!("cidr limited successfully!");
+                println!("Rule ID: {}", rule_ids[0].clone());
+                println!("cidr: {}", cidr);
+                println!(
+                    "Duration: {} seconds",
+                    seconds
+                        .map(|s| s.to_string())
+                        .unwrap_or("infinity".to_string())
+                );
+            }
+            Err(e) => {
+                eprintln!("Failed to limit cidr: {}", e);
+                std::process::exit(1);
+            }
+        },
+
         Commands::Ban { ip, seconds } => match client.ban(ip, seconds).await {
             Ok(rule_id) => {
                 println!("IP banned successfully!");
@@ -128,6 +227,44 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 eprintln!("Failed to ban IP: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::BatchBan { ips, seconds } => match client.batch_ban(ips.clone(), seconds).await {
+            Ok(rule_ids) => {
+                println!("IP banned successfully!");
+                for (i, rule_id) in rule_ids.iter().enumerate() {
+                    print!("Rule ID: {}    ", rule_id);
+                    println!("IP: {}", ips[i]);
+                }
+                println!(
+                    "Duration: {} seconds",
+                    seconds
+                        .map(|s| s.to_string())
+                        .unwrap_or("infinity".to_string())
+                );
+            }
+            Err(e) => {
+                eprintln!("Failed to ban IP: {}", e);
+                std::process::exit(1);
+            }
+        },
+
+        Commands::BanCidr { cidr, seconds } => match client.ban_cidr(cidr, seconds).await {
+            Ok(rule_ids) => {
+                println!("cidr banned successfully!");
+                println!("Rule ID: {}", rule_ids[0].clone());
+                println!("cidr: {}", cidr);
+                println!(
+                    "Duration: {} seconds",
+                    seconds
+                        .map(|s| s.to_string())
+                        .unwrap_or("infinity".to_string())
+                );
+            }
+            Err(e) => {
+                eprintln!("Failed to ban cidr: {}", e);
                 std::process::exit(1);
             }
         },

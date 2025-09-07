@@ -1,6 +1,6 @@
 [package]
 name = "safe-traffic-common"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -11,6 +11,7 @@ log = {workspace=true}
 serde = {workspace=true}
 anyhow = {workspace=true}
 toml = "0.5"                                               # TOML 解析
+ipnet = { workspace=true, features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3.20.0"

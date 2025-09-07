@@ -3,7 +3,7 @@ use crate::error::FirewallError;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, error, info, warn};
-pub use parser::{parse_output, NftObject};
+pub use parser::get_parsed_handle;
 use std::{collections::VecDeque, fs::OpenOptions, process::Stdio, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -41,10 +41,13 @@ pub enum NftError {
 impl NftProcess {
     /// 创建新的 nft 进程
     async fn new() -> Result<Self> {
+        let mut temp_path: std::path::PathBuf = std::env::temp_dir();
+        temp_path.push("nft-stderr.log");
+
         let err_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open("nft-stderr.log")
+            .open(&temp_path)
             .context("open log file fail")?;
 
         let mut child = Command::new("nft")

@@ -112,9 +112,33 @@ pub struct AcceptExpr {
     accept: Option<serde_json::Value>,
 }
 
-pub async fn parse_output(json_output: &str) -> anyhow::Result<Vec<NftObject>> {
+async fn parse_output(json_output: &str) -> anyhow::Result<Vec<NftObject>> {
     let nft_data: NftJsonOutput = serde_json::from_str(json_output)
         .map_err(|e| anyhow::anyhow!("parser error  : {}, \n fail to parse {}", e, json_output))?;
 
     Ok(nft_data.nftables)
+}
+
+pub async fn get_parsed_handle(output_with_handle: String) -> anyhow::Result<String> {
+    let nft_objs = parse_output(&output_with_handle).await?;
+
+    let nft_obj = nft_objs
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("fail to  get output  after adding rule"))?;
+
+    let handle = match nft_obj {
+        NftObject::Add(obj) => obj
+            .get_handle()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("fail to get "))?
+            .to_string(),
+        NftObject::Other(other) => {
+            return Err(anyhow::anyhow!("parse output error: {:?}", other));
+        }
+        _ => {
+            return Err(anyhow::anyhow!("parse output error: {:?}", nft_obj));
+        }
+    };
+
+    Ok(handle)
 }

@@ -1,25 +1,30 @@
-use crate::controller::Firewall;
+use crate::controller::{Controllable, Firewall};
 use safe_traffic_common::{
     config::{Action, HookType, Rule},
     utils::{ControlSignal, RunState, SignalController, TrafficStats},
 };
 
 use chrono::{DateTime, Utc};
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use log::{debug, error, info};
 use std::{
+    collections::HashSet,
     net::IpAddr,
-    sync::{atomic::Ordering, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::{sync::mpsc, time};
 
 const MAX_WINDOW_BUFFER: usize = 60;
-const CONCURRENT_SIZE: usize = 10;
+const MAX_REMOVE_MARKER: usize = 60;
+const CONCURRENT_SIZE: usize = 4;
 
 /// 单 IP 的滑动窗口记录
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Window {
     /// 最近 bytes 的循环缓冲
     buffer: Vec<u64>,
@@ -27,26 +32,45 @@ struct Window {
     pos: usize,
     /// 上次更新时间
     last_ts: DateTime<Utc>,
+    remove_marker: AtomicUsize,
+}
+
+impl Window {
+    async fn aging(&self) {
+        self.remove_marker.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn should_remove(&self) -> bool {
+        self.remove_marker.load(Ordering::Relaxed) >= MAX_REMOVE_MARKER
+    }
 }
 
 /// 规则引擎管理所有 IP 的窗口并执行动作
 pub struct RuleEngine {
-    rules: Vec<Rule>,
+    rules: DashSet<Rule>,
     stats: Arc<DashMap<IpAddr, TrafficStats>>,
     handles: DashMap<IpAddr, Vec<String>>,
     windows: DashMap<IpAddr, Window>,
     signal_controller: SignalController,
+    firewall: Arc<Firewall>,
 }
 
 impl RuleEngine {
     /// 新建实例
-    pub fn new(rules: Vec<Rule>, stats: Arc<DashMap<IpAddr, TrafficStats>>) -> Self {
+    pub fn new(
+        rules: HashSet<Rule>,
+        stats: Arc<DashMap<IpAddr, TrafficStats>>,
+        firewall: Arc<Firewall>,
+    ) -> Self {
+        let rules = rules.into_iter().collect::<DashSet<Rule>>();
+
         RuleEngine {
             rules,
             stats,
             handles: DashMap::new(),
             windows: DashMap::new(),
             signal_controller: SignalController::new(),
+            firewall,
         }
     }
 
@@ -72,13 +96,15 @@ impl RuleEngine {
     }
 
     /// 检查所有 IP 并在必要时调用防火墙控制
-    pub async fn check_and_apply(&self, fw_origin: Arc<Firewall>) -> anyhow::Result<()> {
+    pub async fn check_and_apply(&self) -> anyhow::Result<()> {
+        let fw_origin = self.firewall.clone();
         let now = Utc::now();
         // 遍历每个 IP 的最新流量
-        let entries: Vec<_> = self
+        let mut ips: HashSet<IpAddr> = self
             .stats
             .iter()
-            // .filter(|entry| !fw_origin.is_excluded(entry.key()))
+            // let mut ips: HashSet<IpAddr> = stream::iter(self.stats.iter())
+            // .filter(|entry| !fw_origin.is_excluded(entry.key()).await)
             .map(|entry| {
                 let bps = match fw_origin.hook {
                     HookType::Input => entry.value().rx_delta,
@@ -89,56 +115,115 @@ impl RuleEngine {
                     buffer: vec![0; MAX_WINDOW_BUFFER], // 最多支持 60 秒窗口
                     pos: 0,
                     last_ts: now,
+                    remove_marker: AtomicUsize::new(0),
                 });
 
                 // 如果超过 1 秒，推进循环缓冲
                 if (now - win.last_ts).num_seconds() >= 1 {
                     win.pos = (win.pos + 1) % win.buffer.len();
                     let pos = win.pos;
+                    // println!("bps: {}, ip: {}", bps, entry.key());
                     win.buffer[pos] = bps;
                     win.last_ts = now;
                 }
-                let v = win.value().clone();
-                (*entry.key(), v)
+
+                *entry.key()
             })
             .collect();
 
-        debug!(
-            "starting checking rule: stats entries count: {}",
-            entries.len()
-        );
+        self.handles.iter().for_each(|v| {
+            ips.insert(*v.key());
+        });
+
+        debug!("starting checking rule: stats entries count: {}", ips.len());
+
+        let concurrent_size = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(CONCURRENT_SIZE);
 
         // 异步并发处理
-        stream::iter(entries)
-            .filter(|entry| {
+        stream::iter(ips)
+            .filter(|ip| {
                 let fw_origin = &fw_origin;
-                let ip = entry.0;
+                let ip = *ip;
                 async move { !fw_origin.is_excluded(&ip).await }
             })
             .map(Ok::<_, anyhow::Error>)
-            .try_for_each_concurrent(CONCURRENT_SIZE, |(ip, win)| {
+            .try_for_each_concurrent(concurrent_size, |ip| {
                 let fw = Arc::clone(&fw_origin);
                 async move {
                     // 对每条规则进行检测
-                    for rule in &self.rules {
+                    for rule in self.rules.clone() {
                         if rule.is_excluded(&ip) {
                             debug!("skipping excluded IP: {}", ip);
                             continue;
                         }
 
+                        let (rules_num, _removed_rules_num) =
+                            self.clean_expiration_rules(&rule, ip).await?;
+
                         let window_size = rule.window_secs as usize;
+                        let win = if let Some(win) = self.windows.get(&ip) {
+                            win
+                        } else {
+                            continue;
+                        };
+                        // let entry = if let dashmap::mapref::entry::Entry::Occupied(mut entry) =
+                        // self.windows.entry(ip)
+                        // {
+                        // entry
+                        // } else {
+                        // continue;
+                        // };
+                        // let win = entry.get();
                         // 计算滑动窗口内总流量
                         let sum: u64 = win
                             .buffer
                             .iter()
                             .cycle()
-                            .skip((win.pos + win.buffer.len() - window_size) % win.buffer.len())
+                            .skip({
+                                
+
+                                (win.pos + win.buffer.len() - window_size + 1)
+                                    % win.buffer.len()
+                            })
                             .take(window_size)
                             .sum();
                         let avg_bps = sum / rule.window_secs;
+
+                        if rules_num == 0 {
+                            // println!(" ip: {} \n average bps: {}, win buffer: {:?}, \n &win.buffer.len : {} \n, win.pos: {}", ip, avg_bps, &win.buffer, &win.buffer.len(), win.pos);
+
+                            let total_sum: u64 = win.buffer.iter().sum();
+
+                            // println!("total ip:  {}", self.stats.len());
+
+                            if total_sum == 0 {
+                                win.aging().await;
+                                // if win.should_remove().await {
+                                // info!("clean window of IP: {}", ip);
+                                // entry.remove_entry();
+                                // self.windows.remove(&ip);
+                                // self.stats.remove(&ip);
+                                // }
+                                // continue
+                            }
+                        }
+
+                        // if avg_bps == 0 {
+                        // self.stats.remove(&ip);
+                        // self.windows.remove(&ip);
+                        // continue
+                        // }
+
                         // 超过阈值 => 执行动作
                         debug!("{} average bps: {}", &ip, &avg_bps);
                         if avg_bps > rule.threshold_bps {
+                            // println!(
+                            // "ip: {}, avg_bps: {},\n win.buffer: {:?}, \n win.pos: {}",
+                            // &ip, avg_bps, &win.buffer, win.pos
+                            // );
+
                             match rule.action {
                                 Action::RateLimit {
                                     kbps,
@@ -169,9 +254,6 @@ impl RuleEngine {
                                 }
                             }
                         }
-
-                        self.clean_expiration_rules(rule, ip, Arc::clone(&fw))
-                            .await?;
                     }
                     Ok(())
                 }
@@ -184,9 +266,13 @@ impl RuleEngine {
         &self,
         rule: &Rule,
         ip: IpAddr,
-        fw: Arc<Firewall>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(usize, usize)> {
+        let fw = self.firewall.clone();
+        let mut rules_num = 0;
+        let mut removed_rules_num = 0;
+        debug!("checking  for ip: {}", &ip);
         if let Some(ids) = self.handles.get(&ip) {
+            rules_num += ids.len();
             for id in ids.clone() {
                 match rule.action {
                     Action::RateLimit {
@@ -195,18 +281,19 @@ impl RuleEngine {
                         seconds,
                     } => {
                         if let Some(seconds) = seconds {
-                            if fw.is_expiration(&id, seconds).await {
+                            if fw.is_expiration(&id, seconds, &rule.action).await {
                                 debug!("intend to remove limit rule {} because of expiration", ip);
                                 fw.unblock(&id).await?;
+                                removed_rules_num += 1;
                             }
                         }
-                        continue;
                     }
                     Action::Ban { seconds } => {
                         if let Some(seconds) = seconds {
-                            if fw.is_expiration(&id, seconds).await {
+                            if fw.is_expiration(&id, seconds, &rule.action).await {
                                 debug!("intend to unban {} because of expiration", ip);
                                 fw.unblock(&id).await?;
+                                removed_rules_num += 1;
                             }
                         }
                     }
@@ -214,11 +301,11 @@ impl RuleEngine {
             }
         }
 
-        Ok(())
+        Ok((rules_num, removed_rules_num))
     }
 
     /// 启动规则引擎主循环，支持暂停/恢复/停止
-    pub async fn start(&self, fw: Arc<Firewall>, check_interval: Duration) -> anyhow::Result<()> {
+    pub async fn start(&self, check_interval: Duration) -> anyhow::Result<()> {
         info!("RuleEngine starting...");
 
         // 创建控制信号通道
@@ -270,18 +357,26 @@ impl RuleEngine {
                     }
 
                     // 执行检查和应用规则
-                    match self.check_and_apply(Arc::clone(&fw)).await {
+                    let start = tokio::time::Instant::now();
+                    match self.check_and_apply().await {
                         Ok(_) => {}
                         Err(e) => error!("check and apply failed: {}", e),
                     }
+                    let elapsed = start.elapsed();
+                    debug!("check_and_apply elapsed: {:?}", elapsed);
+
+                    let start = tokio::time::Instant::now();
+                    self.clean_expired_windows().await;
+                    let elapsed = start.elapsed();
+                    debug!("clean_expired_windows elapsed: {:?}", elapsed);
+
                 }
 
                 // 在暂停状态下等待resume信号
                 _ = self.signal_controller.resume_notify.notified(),
                   if !self.signal_controller.state.load(Ordering::Relaxed) => {
                     debug!("Resume notification received, but state will be checked in next loop iteration");
-                    // 这个分支主要是为了在暂停状态下保持响应性
-                    // 实际的状态变更由control_rx.recv()分支处理
+                    // 为了在暂停状态下保持响应性，实际的状态变更由control_rx.recv()分支处理
                 }
             }
         }
@@ -292,5 +387,146 @@ impl RuleEngine {
 
         info!("RuleEngine stopped gracefully");
         Ok(())
+    }
+
+    pub async fn add_ban_rule_by_hand(
+        &self,
+        ip: IpAddr,
+        rule_id: String,
+        seconds: Option<u64>,
+        window_secs: Option<u64>,
+        threshold_bps: Option<u64>,
+    ) -> anyhow::Result<()> {
+        let mut rule = Rule {
+            action: Action::Ban { seconds },
+            ..Default::default() // 其他字段保持默认
+        };
+        if let Some(window_secs) = window_secs {
+            rule.window_secs = window_secs;
+        };
+        if let Some(threshold_bps) = threshold_bps {
+            rule.threshold_bps = threshold_bps;
+        };
+
+        self.handles
+            .entry(ip)
+            .and_modify(|vec| vec.push(rule_id.clone()))
+            .or_insert_with(|| vec![rule_id]);
+
+        if self.rules.insert(rule) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("fail to add rule"))
+        }
+    }
+
+    pub async fn add_limit_rule_by_hand(
+        &self,
+        ip: IpAddr,
+        rule_id: String,
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+        window_secs: Option<u64>,
+        threshold_bps: Option<u64>,
+    ) -> anyhow::Result<()> {
+        let mut rule = Rule {
+            action: Action::RateLimit {
+                kbps,
+                burst,
+                seconds,
+            },
+            ..Default::default() // 其他字段保持默认
+        };
+        if let Some(window_secs) = window_secs {
+            rule.window_secs = window_secs;
+        };
+        if let Some(threshold_bps) = threshold_bps {
+            rule.threshold_bps = threshold_bps;
+        };
+
+        self.handles
+            .entry(ip)
+            .and_modify(|vec| vec.push(rule_id.clone()))
+            .or_insert_with(|| vec![rule_id]);
+        if self.rules.insert(rule) {
+            Ok(())
+        } else {
+            error!("fail to add rate limit rule by hand");
+            Err(anyhow::anyhow!("fail to add rule"))
+        }
+    }
+
+    pub async fn dyn_block(
+        &self,
+        target: Box<dyn Controllable<Controller = Arc<Firewall>>>,
+        seconds: Option<u64>,
+        window_secs: Option<u64>,
+        threshold_bps: Option<u64>,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut rule = Rule {
+            action: Action::Ban { seconds },
+            ..Default::default() // 其他字段保持默认
+        };
+        if let Some(window_secs) = window_secs {
+            rule.window_secs = window_secs;
+        };
+        if let Some(threshold_bps) = threshold_bps {
+            rule.threshold_bps = threshold_bps;
+        };
+        self.rules.insert(rule);
+
+        let rule_ids = target.ban(seconds, &self.firewall).await?;
+        let keys = target.to_handle().await?;
+        for (i, key) in keys.iter().enumerate() {
+            let ip: IpAddr = key.parse()?;
+            self.handles
+                .entry(ip)
+                .and_modify(|vec| vec.push(rule_ids[i].clone()))
+                .or_insert_with(|| vec![rule_ids[i].clone()]);
+        }
+        Ok(rule_ids)
+    }
+
+    pub async fn dyn_limit(
+        &self,
+        target: Box<dyn Controllable<Controller = Arc<Firewall>>>,
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+        window_secs: Option<u64>,
+        threshold_bps: Option<u64>,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut rule = Rule {
+            action: Action::RateLimit {
+                kbps,
+                burst,
+                seconds,
+            },
+            ..Default::default() // 其他字段保持默认
+        };
+        if let Some(window_secs) = window_secs {
+            rule.window_secs = window_secs;
+        };
+        if let Some(threshold_bps) = threshold_bps {
+            rule.threshold_bps = threshold_bps;
+        };
+        self.rules.insert(rule);
+
+        let rule_ids = target.limit(kbps, burst, seconds, &self.firewall).await?;
+        let keys = target.to_handle().await?;
+        for (i, key) in keys.iter().enumerate() {
+            let ip: IpAddr = key.parse()?;
+            self.handles
+                .entry(ip)
+                .and_modify(|vec| vec.push(rule_ids[i].clone()))
+                .or_insert_with(|| vec![rule_ids[i].clone()]);
+        }
+        Ok(rule_ids)
+    }
+
+    async fn clean_expired_windows(&self) {
+        debug!("cleaning expired windows");
+        self.windows.retain(|_ip, win| !win.should_remove());
     }
 }

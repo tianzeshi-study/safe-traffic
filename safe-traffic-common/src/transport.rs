@@ -1,5 +1,6 @@
 use crate::utils::FirewallRule;
 
+use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
@@ -14,10 +15,32 @@ pub enum Request {
         burst: Option<u64>,
         seconds: Option<u64>,
     },
+
+    /// 批量设置IP速率限制
+    BatchLimit {
+        ips: Vec<IpAddr>,
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+    },
+
+    LimitCidr {
+        cidr: IpNet,
+        kbps: u64,
+        burst: Option<u64>,
+        seconds: Option<u64>,
+    },
+
     /// 封禁IP指定时长
     Ban { ip: IpAddr, seconds: Option<u64> },
-    /// 检查规则是否过期
-    IsExpiration { rule_id: String, seconds: u64 },
+    /// 批量封禁IP指定时长
+    BatchBan {
+        ips: Vec<IpAddr>,
+        seconds: Option<u64>,
+    },
+
+    /// 封禁网段指定时长
+    BanCidr { cidr: IpNet, seconds: Option<u64> },
     /// 解封指定规则ID
     Unblock { rule_id: String },
     /// 白名单
@@ -31,8 +54,6 @@ pub enum Request {
     Cleanup,
     /// 获取防火墙状态
     Status,
-    /// 批量封禁IP
-    BatchBan { ips: Vec<IpAddr>, seconds: u64 },
     /// 健康检查
     Ping,
     ///  清空规则
@@ -67,4 +88,118 @@ pub enum ResponseData {
     RuleList(Vec<FirewallRule>),
     /// Ping响应
     Pong,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn test_request_serialization() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        let limit_req = Request::Limit {
+            ip,
+            kbps: 100,
+            burst: None,
+            seconds: Some(60),
+        };
+        let json = toml::to_string(&limit_req).unwrap();
+        assert!(json.contains("Limit"));
+        assert!(json.contains("192.168.1.1"));
+    }
+
+    #[test]
+    fn test_batch_requests() {
+        let ips = vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))];
+        let batch_ban = Request::BatchBan {
+            ips,
+            seconds: Some(120),
+        };
+
+        let json = toml::to_string(&batch_ban).unwrap();
+        let parsed: Request = toml::from_str(&json).unwrap();
+
+        match parsed {
+            Request::BatchBan { ips, seconds } => {
+                assert_eq!(ips.len(), 1);
+                assert_eq!(seconds, Some(120));
+            }
+            _ => panic!("Wrong request type"),
+        }
+    }
+
+    #[test]
+    fn test_cidr_requests() {
+        let cidr = "192.168.1.0/24".parse::<IpNet>().unwrap();
+        let ban_cidr = Request::BanCidr {
+            cidr,
+            seconds: None,
+        };
+
+        let json = toml::to_string(&ban_cidr).unwrap();
+        assert!(json.contains("BanCidr"));
+        assert!(json.contains("192.168.1.0/24"));
+    }
+
+    #[test]
+    fn test_simple_requests() {
+        let requests = vec![
+            Request::GetActiveRules,
+            Request::Cleanup,
+            Request::Status,
+            Request::Ping,
+            Request::Flush,
+            Request::Stop,
+            Request::Pause,
+            Request::Resume,
+        ];
+
+        for req in requests {
+            let json = toml::to_string(&req).unwrap();
+            let _: Request = toml::from_str(&json).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_response_success() {
+        let success = Response::Success(ResponseData::Message("OK".to_string()));
+        let json = toml::to_string(&success).unwrap();
+        assert!(json.contains("Success"));
+        assert!(json.contains("OK"));
+    }
+
+    #[test]
+    fn test_response_error() {
+        let error = Response::Error {
+            message: "Failed".to_string(),
+        };
+        let json = toml::to_string(&error).unwrap();
+        let parsed: Response = toml::from_str(&json).unwrap();
+
+        match parsed {
+            Response::Error { message } => assert_eq!(message, "Failed"),
+            _ => panic!("Wrong response type"),
+        }
+    }
+
+    #[test]
+    fn test_unblock_request() {
+        let unblock = Request::Unblock {
+            rule_id: "rule123".to_string(),
+        };
+        let json = toml::to_string(&unblock).unwrap();
+        assert!(json.contains("Unblock"));
+        assert!(json.contains("rule123"));
+    }
+
+    #[test]
+    fn test_exclude_request() {
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let exclude = Request::Exclude { ip };
+        let json = toml::to_string(&exclude).unwrap();
+        assert!(json.contains("Exclude"));
+        assert!(json.contains("127.0.0.1"));
+    }
 }

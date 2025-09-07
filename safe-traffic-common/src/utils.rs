@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::{
     net::IpAddr,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
+        Arc,
     },
     time::Instant,
 };
-use tokio::sync::{Mutex, Notify, mpsc};
+use tokio::sync::{mpsc, Mutex, Notify};
 
 /// 控制信号枚举
 #[derive(Debug, Clone)]
@@ -119,6 +119,7 @@ pub struct TrafficStats {
     pub rx_delta: u64,
     pub tx_delta: u64,
     pub last_updated: Instant,
+    pub counter_handles: Option<(String, String)>,
 }
 
 impl Default for TrafficStats {
@@ -129,6 +130,7 @@ impl Default for TrafficStats {
             rx_delta: 0,
             tx_delta: 0,
             last_updated: Instant::now(),
+            counter_handles: None,
         }
     }
 }
@@ -140,5 +142,5 @@ pub struct FirewallRule {
     pub ip: IpAddr,
     pub rule_type: Action,
     pub created_at: DateTime<Utc>,
-    pub handle: Option<String>,
+    pub handle: Vec<String>,
 }
